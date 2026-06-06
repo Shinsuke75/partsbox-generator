@@ -4,13 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>木工用パラメトリック・パーツボックス・ジェネレーター</title>
-    <script src="https://unpkg.com/three@0.153.0/build/three.min.js"></script>
-    <script src="https://unpkg.com/three@0.153.0/examples/js/controls/OrbitControls.js"></script>
-    <script src="https://unpkg.com/three@0.153.0/examples/js/exporters/STLExporter.js"></script>
-    <script src="https://unpkg.com/@jscad/modeling@2.2.0/dist/index.min.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/examples/js/exporters/STLExporter.js"></script>
+    <script src="https://unpkg.com/@jscad/modeling@2.2.0/dist/jscad-modeling.min.js"></script>
     <style>
         body { margin: 0; font-family: 'Helvetica Neue', Arial, sans-serif; display: flex; height: 100vh; overflow: hidden; background: #f5f5f7; color: #334155; }
-        #sidebar { width: 360px; background: #fff; padding: 18px; box-sizing: border-box; border-right: 1px solid #e2e8f0; overflow-y: auto; }
+        #sidebar { width: 360px; background: #fff; padding: 18px; box-sizing: border-box; border-right: 1px solid #e2e8f0; overflow-y: auto; flex-shrink: 0; }
         #main-content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
         #viewer { flex: 1; position: relative; background: #eef2f5; }
         #status-indicator {
@@ -36,7 +36,7 @@
         .param-controls input[type="range"] { flex: 1; }
         .param-controls input[type="number"] { width: 84px; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; text-align: right; }
         .info-box { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 8px 10px; font-size: 0.8rem; line-height: 1.4; color: #166534; margin: 10px 0; }
-        #btn-download { width: 100%; border: 0; border-radius: 6px; padding: 10px; cursor: pointer; color: #fff; background: #2563eb; font-weight: 700; }
+        #btn-download { width: 100%; border: 0; border-radius: 6px; padding: 10px; cursor: pointer; color: #fff; background: #2563eb; font-weight: 700; font-size: 0.95rem; }
         #btn-download:hover { background: #1d4ed8; }
         pre { margin: 0; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 10px; font-size: 0.85rem; white-space: pre-wrap; line-height: 1.4; }
     </style>
@@ -46,17 +46,18 @@
         <h2>木工用パラメトリック・パーツボックス・ジェネレーター</h2>
         <div id="controls-root"></div>
         <div class="info-box">
-            📌 <strong>木工自動固定ルール</strong><br>
-            ・しきり溝の幅 = 板厚 t の 1/3<br>
-            ・しきり溝の深さ = 板厚 t の 1/3<br>
-            ・溝位置 = 底面から板厚 t の高さ
+            <strong>木工自動固定ルール</strong><br>
+            ・底板溝の幅 = 板厚 t の 1/3<br>
+            ・底板溝の深さ = 板厚 t の 1/3<br>
+            ・溝位置 = 底面から板厚 t の高さ<br>
+            ・前方飛び出し口 = 45度傾斜カット
         </div>
-        <button id="btn-download">真のSTLをエポート</button>
+        <button id="btn-download">STL をエクスポート</button>
     </div>
 
     <div id="main-content">
         <div id="viewer">
-            <div id="status-indicator">JSCAD幾何計算中...</div>
+            <div id="status-indicator">JSCAD 計算中...</div>
         </div>
         <div id="cutlist-container">
             <h3>リアルタイム木取り図（カットリスト）</h3>
@@ -65,33 +66,33 @@
     </div>
 
 <script>
-const params = [
-    { id: 'baseD', name: '基本基準サイズ d (mm)', min: 50, max: 300, step: 1, value: 140 },
-    { id: 'ratioX', name: '幅比率 (X比率)', min: 0.2, max: 3.0, step: 0.1, value: 1.0 },
-    { id: 'ratioY', name: '奥行比率 (Y比率)', min: 0.2, max: 3.0, step: 0.1, value: 1.5 },
-    { id: 'ratioZ', name: '高さ比率 (Z比率)', min: 0.2, max: 3.0, step: 0.1, value: 1.0 },
-    { id: 'thickness', name: '板厚 t (mm)', min: 4, max: 30, step: 0.5, value: 9 }
+// ─── パラメータ定義 ──────────────────────────────────────────────
+const PARAM_DEFS = [
+    { id: 'baseD',     name: '基本基準サイズ d (mm)', min: 50,  max: 300, step: 1,   value: 140 },
+    { id: 'ratioX',    name: '幅比率 (X比率)',        min: 0.2, max: 3.0, step: 0.1, value: 1.0 },
+    { id: 'ratioY',    name: '奥行比率 (Y比率)',      min: 0.2, max: 3.0, step: 0.1, value: 1.0 }, // ← 修正: 1.5→1.0
+    { id: 'ratioZ',    name: '高さ比率 (Z比率)',      min: 0.2, max: 3.0, step: 0.01,value: 1.5 },
+    { id: 'thickness', name: '板厚 t (mm)',           min: 3,   max: 30,  step: 0.5, value: 9   }
 ];
 
-let scene, camera, renderer, controls;
-let modelGroup;
-let latestMesh = null;
 const paramValues = {};
-
+let scene, camera, renderer, controls, modelGroup, latestMesh;
 let updateTimer = null;
 let computeRunning = false;
 let computeQueued = false;
 let requestVersion = 0;
 
+// ─── ステータス表示 ───────────────────────────────────────────────
 function setStatus(active, text) {
     const node = document.getElementById('status-indicator');
     if (text) node.textContent = text;
     node.classList.toggle('active', !!active);
 }
 
+// ─── UI 初期化 ────────────────────────────────────────────────────
 function initUI() {
     const root = document.getElementById('controls-root');
-    params.forEach((p) => {
+    PARAM_DEFS.forEach((p) => {
         paramValues[p.id] = p.value;
 
         const group = document.createElement('div');
@@ -106,20 +107,14 @@ function initUI() {
 
         const slider = document.createElement('input');
         slider.type = 'range';
-        slider.min = p.min;
-        slider.max = p.max;
-        slider.step = p.step;
-        slider.value = p.value;
+        slider.min = p.min; slider.max = p.max; slider.step = p.step; slider.value = p.value;
 
         const number = document.createElement('input');
         number.type = 'number';
-        number.min = p.min;
-        number.max = p.max;
-        number.step = p.step;
-        number.value = p.value;
+        number.min = p.min; number.max = p.max; number.step = p.step; number.value = p.value;
 
-        function updateValue(value) {
-            let v = parseFloat(value);
+        function updateValue(raw) {
+            let v = parseFloat(raw);
             if (!Number.isFinite(v)) v = p.value;
             v = Math.max(p.min, Math.min(p.max, v));
             slider.value = v;
@@ -128,7 +123,7 @@ function initUI() {
             scheduleGeometryUpdate();
         }
 
-        slider.addEventListener('input', (e) => updateValue(e.target.value));
+        slider.addEventListener('input',  (e) => updateValue(e.target.value));
         number.addEventListener('change', (e) => updateValue(e.target.value));
 
         controlsDiv.appendChild(slider);
@@ -141,6 +136,7 @@ function initUI() {
     document.getElementById('btn-download').addEventListener('click', downloadSTL);
 }
 
+// ─── Three.js 初期化 ──────────────────────────────────────────────
 function initThree() {
     const container = document.getElementById('viewer');
 
@@ -148,7 +144,8 @@ function initThree() {
     scene.background = new THREE.Color(0xeef2f5);
 
     camera = new THREE.PerspectiveCamera(42, container.clientWidth / container.clientHeight, 1, 6000);
-    camera.position.set(260, 230, 360);
+    // フロント側（Z マイナス）から箱の傾斜開口部が見えるように配置
+    camera.position.set(280, 220, -380);
 
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(container.clientWidth, container.clientHeight);
@@ -187,11 +184,13 @@ function animate() {
     if (renderer && scene && camera) renderer.render(scene, camera);
 }
 
+// ─── 更新スケジューリング（デバウンス） ─────────────────────────
 function scheduleGeometryUpdate() {
     requestVersion += 1;
     if (updateTimer) clearTimeout(updateTimer);
-    setStatus(true, 'JSCAD幾何計算中...');
-    updateTimer = setTimeout(() => runGeometryUpdate(requestVersion), 10);
+    setStatus(true, 'JSCAD 計算中...');
+    // 操作が落ち着いてから 80ms 後に計算開始（UI がもたつかないようデバウンス）
+    updateTimer = setTimeout(() => runGeometryUpdate(requestVersion), 80);
 }
 
 function runGeometryUpdate(version) {
@@ -199,15 +198,22 @@ function runGeometryUpdate(version) {
         computeQueued = true;
         return;
     }
-
     computeRunning = true;
-    setTimeout(() => {
-        const dims = calculateDimensions();
-        const result = buildSolidWithJscad(dims);
 
-        if (version === requestVersion) {
-            applyModel(result.geometry, dims);
-            updateCutList(dims);
+    // setTimeout(0) でレンダリングキューを一度解放してから重い計算へ
+    setTimeout(() => {
+        try {
+            const dims = calculateDimensions();
+            const triangles = buildSolidWithJscad(dims);
+
+            if (version === requestVersion) {
+                applyModel(triangles, dims);
+                updateCutList(dims);
+                setStatus(false);
+            }
+        } catch (err) {
+            console.error('JSCAD error:', err);
+            setStatus(true, 'エラー: ' + err.message);
         }
 
         computeRunning = false;
@@ -215,143 +221,181 @@ function runGeometryUpdate(version) {
         if (computeQueued || version !== requestVersion) {
             computeQueued = false;
             runGeometryUpdate(requestVersion);
-            return;
         }
-
-        setStatus(false);
-    }, 10);
+    }, 0);
 }
 
+// ─── 寸法計算 ────────────────────────────────────────────────────
 function calculateDimensions() {
     const d = paramValues.baseD;
     const W = d * paramValues.ratioX;
     const L = d * paramValues.ratioY;
     const H = d * paramValues.ratioZ;
-    const t = Math.min(paramValues.thickness, W / 4, L / 4, H / 2);
+    // 板厚が箱の最小寸法を超えないようにクランプ
+    const t = Math.min(paramValues.thickness, W / 4, L / 4, H / 2.5);
 
-    const grooveWidth = t / 3;
-    const grooveDepth = t / 3;
-    const grooveBottom = -H / 2 + t;
-    const grooveCenterY = grooveBottom + grooveWidth / 2;
+    const grooveWidth  = t / 3;
+    const grooveDepth  = t / 3;
+    // 溝の中心Y座標: 底面から t の位置に溝の下端が来る
+    const grooveCenterY = -H / 2 + 5 * t / 6;
 
-    return { d, W, L, H, t, grooveWidth, grooveDepth, grooveBottom, grooveCenterY };
+    return { d, W, L, H, t, grooveWidth, grooveDepth, grooveCenterY };
 }
 
-function buildSolidWithJscad(d) {
+// ─── JSCAD CSG → 三角形配列 ─────────────────────────────────────
+function buildSolidWithJscad(dims) {
     const modeling = window.jscadModeling;
-    const { cuboid } = modeling.primitives;
-    const { subtract, union } = modeling.booleans;
-    const { translate, rotateX } = modeling.transforms;
-    const { geom3 } = modeling.geometries;
+    if (!modeling) throw new Error('jscadModeling が読み込まれていません');
 
+    const { cuboid }             = modeling.primitives;
+    const { subtract, union }    = modeling.booleans;
+    const { translate, rotateX } = modeling.transforms;
+    const { geom3 }              = modeling.geometries;
+
+    const d = dims;
+
+    // 内側寸法
+    const innerW = Math.max(1, d.W - 2 * d.t);  // 内側幅（X方向）
+    const innerD = Math.max(1, d.L - 2 * d.t);  // 内側奥行き（Z方向）
+
+    // 外殻ボックス（中央原点）
     const outer = cuboid({ size: [d.W, d.H, d.L] });
 
+    // 内側くり抜き（上面開放・底と三方に板厚を残す）
+    // Y: -H/2+t〜H/2（底板厚 t、上面開放）
     const inner = translate(
         [0, d.t / 2, 0],
-        cuboid({ size: [Math.max(1, d.W - 2 * d.t), Math.max(1, d.H - d.t), Math.max(1, d.L - 2 * d.t)] })
+        cuboid({ size: [innerW, Math.max(1, d.H - d.t), innerD] })
     );
 
-    const grooveLenX = Math.max(1, d.W - 2 * d.t);
-    const grooveLenZ = Math.max(1, d.L - 2 * d.t);
-
+    // ─── 底板はめ込み溝（側板・背板の3面のみ。前面は傾斜で開放）───
     const grooveLeft = translate(
         [-d.W / 2 + d.t - d.grooveDepth / 2, d.grooveCenterY, 0],
-        cuboid({ size: [d.grooveDepth, d.grooveWidth, grooveLenZ] })
+        cuboid({ size: [d.grooveDepth, d.grooveWidth, innerD] })  // Z=内側奥行き
     );
     const grooveRight = translate(
-        [d.W / 2 - d.t + d.grooveDepth / 2, d.grooveCenterY, 0],
-        cuboid({ size: [d.grooveDepth, d.grooveWidth, grooveLenZ] })
+        [ d.W / 2 - d.t + d.grooveDepth / 2, d.grooveCenterY, 0],
+        cuboid({ size: [d.grooveDepth, d.grooveWidth, innerD] })  // Z=内側奥行き
     );
     const grooveBack = translate(
         [0, d.grooveCenterY, d.L / 2 - d.t + d.grooveDepth / 2],
-        cuboid({ size: [grooveLenX, d.grooveWidth, d.grooveDepth] })
+        cuboid({ size: [innerW, d.grooveWidth, d.grooveDepth] })  // X=内側幅
     );
-    const grooveFront = translate(
-        [0, d.grooveCenterY, -d.L / 2 + d.t - d.grooveDepth / 2],
-        cuboid({ size: [grooveLenX, d.grooveWidth, d.grooveDepth] })
-    );
+
+    // ─── 傾斜カット（数学的に正確な計算）────────────────────────
+    //
+    // 切断平面の定義:
+    //   A = (y=H/2,  z=L/2-t)  ← 背板内面の上端
+    //   B = (y=-H/2, z=-L/2)   ← 前面の下端（前板は完全に開放）
+    //   中点 M = (y=0, z=-t/2)
+    //
+    // 平面方程式: (L-t)·y − H·z = H·t/2  → 検証: A,B どちらも満たす ✓
+    //
+    // 除去側（前上部）への外向き法線: n = (ny=(L-t), nz=-H) / mag
+    //   → cos(α) = (L-t)/mag, sin(α) = -H/mag なので α = atan2(-H, L-t)
+    //
+    // カッター中心 = M + (H_c/2)·n  (底面が切断平面上に来るよう配置)
+    //
+    const Leff  = d.L - d.t;                              // L-t
+    const mag   = Math.sqrt(d.H * d.H + Leff * Leff);    // |A→B|
+    const alpha = Math.atan2(-d.H, Leff);                 // rotateX 角度
+    const H_c   = 2.5 * mag;                              // 十分大きいカッターサイズ
+
+    const cutter_y = (H_c / 2) * (Leff / mag);            // 0 + offset
+    const cutter_z = (-d.t / 2) - (H_c / 2) * (d.H / mag); // -t/2 + offset
 
     const slopeCutter = translate(
-        [0, d.H / 2 - d.t * 0.6, -d.L / 2 + d.t * 0.2],
-        rotateX(Math.PI / 4, cuboid({ size: [d.W * 1.2, d.H, d.H] }))
+        [0, cutter_y, cutter_z],
+        rotateX(alpha, cuboid({ size: [d.W * 1.5, H_c, H_c] }))
     );
 
-    const shell = subtract(outer, inner, grooveLeft, grooveRight, grooveBack, grooveFront, slopeCutter);
+    // 外殻 − (内部 + 溝3面 + 傾斜)
+    const shell = subtract(outer, inner, grooveLeft, grooveRight, grooveBack, slopeCutter);
 
+    // 底板ソリッド（前面は開放なので背板溝のみ延伸）
+    const bottomW     = Math.max(1, innerW + 2 * d.grooveDepth);       // 左右溝に差し込む分
+    const bottomSizeZ = Math.max(1, innerD + d.grooveDepth);            // 背板溝にのみ差し込む
     const bottomPlate = translate(
-        [0, d.grooveCenterY, 0],
-        cuboid({
-            size: [
-                Math.max(1, d.W - 2 * d.t + 2 * d.grooveDepth),
-                d.grooveWidth,
-                Math.max(1, d.L - 2 * d.t + 2 * d.grooveDepth)
-            ]
-        })
+        [0, d.grooveCenterY, d.grooveDepth / 2],   // 背板側にわずかにシフト
+        cuboid({ size: [bottomW, d.grooveWidth, bottomSizeZ] })
     );
 
     const unified = union(shell, bottomPlate);
 
-    return { geometry: geom3.toTriangles(unified) };
+    // geom3.toPolygons() でポリゴン取得 → ファン三角形分割
+    const polygons = geom3.toPolygons(unified);
+    const triangles = [];
+    for (const poly of polygons) {
+        const verts = poly.vertices;
+        for (let i = 1; i < verts.length - 1; i++) {
+            triangles.push([verts[0], verts[i], verts[i + 1]]);
+        }
+    }
+
+    return triangles;
 }
 
-function jscadTrianglesToThreeGeometry(triangles) {
+// ─── JSCAD三角形配列 → Three.js BufferGeometry ──────────────────
+function trianglesToThreeGeometry(triangles) {
     const positions = new Float32Array(triangles.length * 9);
-    const normals = new Float32Array(triangles.length * 9);
-
+    const normals   = new Float32Array(triangles.length * 9);
     let p = 0;
-    for (let i = 0; i < triangles.length; i += 1) {
-        const tri = triangles[i];
-        const ax = tri[0][0], ay = tri[0][1], az = tri[0][2];
-        const bx = tri[1][0], by = tri[1][1], bz = tri[1][2];
-        const cx = tri[2][0], cy = tri[2][1], cz = tri[2][2];
 
-        positions[p] = ax; positions[p + 1] = ay; positions[p + 2] = az;
-        positions[p + 3] = bx; positions[p + 4] = by; positions[p + 5] = bz;
-        positions[p + 6] = cx; positions[p + 7] = cy; positions[p + 8] = cz;
+    for (const tri of triangles) {
+        const [ax, ay, az] = tri[0];
+        const [bx, by, bz] = tri[1];
+        const [cx, cy, cz] = tri[2];
 
-        const abx = bx - ax, aby = by - ay, abz = bz - az;
-        const acx = cx - ax, acy = cy - ay, acz = cz - az;
-        let nx = aby * acz - abz * acy;
-        let ny = abz * acx - abx * acz;
-        let nz = abx * acy - aby * acx;
-        const nLen = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
-        nx /= nLen; ny /= nLen; nz /= nLen;
+        positions[p]   = ax; positions[p+1] = ay; positions[p+2] = az;
+        positions[p+3] = bx; positions[p+4] = by; positions[p+5] = bz;
+        positions[p+6] = cx; positions[p+7] = cy; positions[p+8] = cz;
 
-        normals[p] = nx; normals[p + 1] = ny; normals[p + 2] = nz;
-        normals[p + 3] = nx; normals[p + 4] = ny; normals[p + 5] = nz;
-        normals[p + 6] = nx; normals[p + 7] = ny; normals[p + 8] = nz;
+        // 面法線
+        const abx = bx-ax, aby = by-ay, abz = bz-az;
+        const acx = cx-ax, acy = cy-ay, acz = cz-az;
+        let nx = aby*acz - abz*acy;
+        let ny = abz*acx - abx*acz;
+        let nz = abx*acy - aby*acx;
+        const nl = Math.sqrt(nx*nx + ny*ny + nz*nz) || 1;
+        nx /= nl; ny /= nl; nz /= nl;
+
+        normals[p]   = nx; normals[p+1] = ny; normals[p+2] = nz;
+        normals[p+3] = nx; normals[p+4] = ny; normals[p+5] = nz;
+        normals[p+6] = nx; normals[p+7] = ny; normals[p+8] = nz;
         p += 9;
     }
 
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-    geometry.computeBoundingSphere();
-    return geometry;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('normal',   new THREE.BufferAttribute(normals,   3));
+    geo.computeBoundingSphere();
+    return geo;
 }
 
+// ─── モデルグループをクリア ───────────────────────────────────────
 function clearModelGroup() {
     while (modelGroup.children.length > 0) {
         const child = modelGroup.children[0];
         if (child.geometry) child.geometry.dispose();
         if (child.material) {
-            if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose());
-            else child.material.dispose();
+            (Array.isArray(child.material) ? child.material : [child.material])
+                .forEach((m) => m.dispose());
         }
         modelGroup.remove(child);
     }
 }
 
+// ─── 三角形 → Three.js に適用 ─────────────────────────────────────
 function applyModel(triangles, dims) {
     clearModelGroup();
+    if (!triangles || triangles.length === 0) return;
 
-    const geometry = jscadTrianglesToThreeGeometry(triangles);
+    const geometry = trianglesToThreeGeometry(triangles);
     const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
         color: 0xc97a2b,
         roughness: 0.58,
         metalness: 0.06
     }));
-
     const edges = new THREE.LineSegments(
         new THREE.EdgesGeometry(geometry),
         new THREE.LineBasicMaterial({ color: 0x5b3414 })
@@ -361,45 +405,58 @@ function applyModel(triangles, dims) {
     modelGroup.add(edges);
     latestMesh = mesh;
 
+    // グリッドの上に乗せる
     modelGroup.position.set(0, dims.H / 2, 0);
 }
 
+// ─── カットリスト更新 ─────────────────────────────────────────────
 function updateCutList(d) {
-    const innerW = Math.max(0, d.W - 2 * d.t);
-    const innerL = Math.max(0, d.L - 2 * d.t);
-    const frontPanelHeight = Math.max(0, d.H - d.t);
+    const innerW  = Math.max(0, d.W - 2 * d.t);
+    const innerD  = Math.max(0, d.L - 2 * d.t);
     const bottomW = Math.max(0, innerW + 2 * d.grooveDepth);
-    const bottomL = Math.max(0, innerL + 2 * d.grooveDepth);
+    const bottomD = Math.max(0, innerD + d.grooveDepth); // 前面は溝なし
 
-    const text = `【木取り図 / カットリスト（mm）】
-----------------------------------------
+    // 側板の形状: 台形（背面高さH、前面ほぼ0の傾斜）
+    // 傾斜角 = atan2(H, L-t)
+    const Leff       = d.L - d.t;
+    const slopeAngle = Math.atan2(d.H, Leff) * 180 / Math.PI;
+
+    document.getElementById('cutlist-text').textContent =
+`【木取り図 / カットリスト（mm）】
+────────────────────────────────────────
 外寸: 幅 ${d.W.toFixed(1)} × 奥行 ${d.L.toFixed(1)} × 高さ ${d.H.toFixed(1)}
 
-側板（2枚）: 厚み ${d.t.toFixed(1)} × 奥行 ${d.L.toFixed(1)} × 高さ ${d.H.toFixed(1)}
-背板（1枚）: 厚み ${d.t.toFixed(1)} × 幅 ${(innerW).toFixed(1)} × 高さ ${d.H.toFixed(1)}
-前板（1枚）: 厚み ${d.t.toFixed(1)} × 幅 ${(innerW).toFixed(1)} × 高さ ${frontPanelHeight.toFixed(1)}（45度傾斜）
-底板（1枚）: 厚み ${d.grooveWidth.toFixed(1)} × 幅 ${bottomW.toFixed(1)} × 奥行 ${bottomL.toFixed(1)}
+側板（左・右 各1枚 計2枚）※台形
+  厚み ${d.t.toFixed(1)} × 奥行 ${d.L.toFixed(1)} × 背面高さ ${d.H.toFixed(1)}
+  （前面に向けて ${slopeAngle.toFixed(1)}° で傾斜、前面高さ ≈ 0）
+
+背板（1枚）
+  厚み ${d.t.toFixed(1)} × 幅 ${innerW.toFixed(1)} × 高さ ${d.H.toFixed(1)}
+
+底板（1枚・溝にはめ込む）
+  厚み ${d.grooveWidth.toFixed(1)} × 幅 ${bottomW.toFixed(1)} × 奥行 ${bottomD.toFixed(1)}
 
 【自動設定された溝仕様】
-溝幅: ${d.grooveWidth.toFixed(1)}
-溝深さ: ${d.grooveDepth.toFixed(1)}
-溝位置: 底面から ${d.t.toFixed(1)} の高さ`; 
-
-    document.getElementById('cutlist-text').textContent = text;
+  溝幅   : ${d.grooveWidth.toFixed(1)} mm（板厚 ${d.t.toFixed(1)} の 1/3）
+  溝深さ : ${d.grooveDepth.toFixed(1)} mm（板厚 ${d.t.toFixed(1)} の 1/3）
+  溝位置 : 底面から ${d.t.toFixed(1)} mm 上
+  溝設置面: 側板（左右）+ 背板 の3面のみ（前面は開放）`;
 }
 
+// ─── STL エクスポート ─────────────────────────────────────────────
 function downloadSTL() {
-    if (!latestMesh) return;
+    if (!latestMesh) { alert('モデルが生成されていません'); return; }
     const exporter = new THREE.STLExporter();
-    const result = exporter.parse(latestMesh, { binary: true });
-    const blob = new Blob([result], { type: 'application/octet-stream' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'partsbox-solid.stl';
+    const result   = exporter.parse(latestMesh, { binary: true });
+    const blob     = new Blob([result], { type: 'application/octet-stream' });
+    const link     = document.createElement('a');
+    link.href      = URL.createObjectURL(blob);
+    link.download  = 'partsbox-solid.stl';
     link.click();
     URL.revokeObjectURL(link.href);
 }
 
+// ─── 起動 ─────────────────────────────────────────────────────────
 window.onload = () => {
     initUI();
     initThree();
