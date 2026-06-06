@@ -7,107 +7,132 @@
     <script src="https://unpkg.com/three@0.153.0/build/three.min.js"></script>
     <script src="https://unpkg.com/three@0.153.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://unpkg.com/three@0.153.0/examples/js/exporters/STLExporter.js"></script>
+    <script src="https://unpkg.com/@jscad/modeling@2.2.0/dist/index.min.js"></script>
     <style>
-        body { margin: 0; font-family: 'Helvetica Neue', Arial, sans-serif; display: flex; height: 100vh; overflow: hidden; background-color: #f5f5f7; }
-        #sidebar { width: 360px; background: white; padding: 20px; box-shadow: 2px 0 10px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 15px; overflow-y: auto; z-index: 10; box-sizing: border-box; }
-        #main-content { flex: 1; display: flex; flex-direction: column; position: relative; }
-        #viewer { flex: 1; background: #eef2f5; position: relative; }
-        #cutlist-container { height: 260px; background: white; border-top: 1px solid #e0e0e0; padding: 15px; overflow-y: auto; box-sizing: border-box; }
-        h2, h3 { margin: 0 0 10px 0; color: #333; font-size: 1.1rem; }
-        .param-group { display: flex; flex-direction: column; gap: 4px; border-bottom: 1px dashed #eee; padding-bottom: 10px; }
-        .param-label { font-size: 0.85rem; color: #555; font-weight: bold; }
-        .param-controls { display: flex; align-items: center; gap: 10px; }
+        body { margin: 0; font-family: 'Helvetica Neue', Arial, sans-serif; display: flex; height: 100vh; overflow: hidden; background: #f5f5f7; color: #334155; }
+        #sidebar { width: 360px; background: #fff; padding: 18px; box-sizing: border-box; border-right: 1px solid #e2e8f0; overflow-y: auto; }
+        #main-content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+        #viewer { flex: 1; position: relative; background: #eef2f5; }
+        #status-indicator {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            background: rgba(15, 23, 42, 0.8);
+            color: #f8fafc;
+            font-size: 12px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s;
+        }
+        #status-indicator.active { opacity: 1; }
+        #cutlist-container { height: 250px; border-top: 1px solid #e2e8f0; background: #fff; padding: 12px; box-sizing: border-box; overflow: auto; }
+        h2 { margin: 0 0 12px 0; font-size: 1.1rem; }
+        h3 { margin: 0 0 8px 0; font-size: 1rem; }
+        .param-group { margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px dashed #e2e8f0; }
+        .param-label { font-size: 0.85rem; margin-bottom: 3px; font-weight: 700; }
+        .param-controls { display: flex; gap: 8px; align-items: center; }
         .param-controls input[type="range"] { flex: 1; }
-        .param-controls input[type="number"] { width: 70px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; text-align: right; }
-        .info-box { background: #f0fdf4; border: 1px solid #bbf7d0; padding: 8px 12px; border-radius: 6px; font-size: 0.8rem; color: #166534; line-height: 1.4; }
-        #btn-download { background: #2563eb; color: white; border: none; padding: 12px; border-radius: 6px; font-weight: bold; cursor: pointer; transition: background 0.2s; font-size: 0.95rem; margin-top: 10px; width: 100%; }
+        .param-controls input[type="number"] { width: 84px; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; text-align: right; }
+        .info-box { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 8px 10px; font-size: 0.8rem; line-height: 1.4; color: #166534; margin: 10px 0; }
+        #btn-download { width: 100%; border: 0; border-radius: 6px; padding: 10px; cursor: pointer; color: #fff; background: #2563eb; font-weight: 700; }
         #btn-download:hover { background: #1d4ed8; }
-        pre { margin: 0; font-family: monospace; font-size: 0.9rem; background: #f8fafc; padding: 10px; border-radius: 4px; border: 1px solid #e2e8f0; white-space: pre-wrap; color: #334155; line-height: 1.4; }
+        pre { margin: 0; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 10px; font-size: 0.85rem; white-space: pre-wrap; line-height: 1.4; }
     </style>
 </head>
 <body>
-
     <div id="sidebar">
-        <h2>パーツボックス設計</h2>
+        <h2>木工用パラメトリック・パーツボックス・ジェネレーター</h2>
         <div id="controls-root"></div>
         <div class="info-box">
-            📌 <strong>木工自動固定ルール：</strong><br>
-            ・溝幅 / 溝深さ = 板厚の 1/3<br>
-            ・溝の位置 = 底面から板厚と同じ距離
+            📌 <strong>木工自動固定ルール</strong><br>
+            ・しきり溝の幅 = 板厚 t の 1/3<br>
+            ・しきり溝の深さ = 板厚 t の 1/3<br>
+            ・溝位置 = 底面から板厚 t の高さ
         </div>
-        <button id="btn-download">STLファイルをダウンロード</button>
+        <button id="btn-download">真のSTLをエポート</button>
     </div>
 
     <div id="main-content">
-        <div id="viewer"></div>
+        <div id="viewer">
+            <div id="status-indicator">JSCAD幾何計算中...</div>
+        </div>
         <div id="cutlist-container">
             <h3>リアルタイム木取り図（カットリスト）</h3>
-            <pre id="cutlist-text">計算中...</pre>
+            <pre id="cutlist-text">計算待機中...</pre>
         </div>
     </div>
 
 <script>
-// パラメータ構成 (比率ベース)
 const params = [
-    { id: 'baseD', name: '基本基準サイズ d (mm)', min: 50, max: 300, step: 1, value: 145 },
+    { id: 'baseD', name: '基本基準サイズ d (mm)', min: 50, max: 300, step: 1, value: 140 },
     { id: 'ratioX', name: '幅比率 (X比率)', min: 0.2, max: 3.0, step: 0.1, value: 1.0 },
     { id: 'ratioY', name: '奥行比率 (Y比率)', min: 0.2, max: 3.0, step: 0.1, value: 1.5 },
-    { id: 'ratioZ', name: '高さ比率 (Z比率)', min: 0.2, max: 3.0, step: 0.01, value: 0.79 },
-    { id: 'thickness', name: '板厚 t (mm)', min: 4, max: 30, step: 0.5, value: 12 }
+    { id: 'ratioZ', name: '高さ比率 (Z比率)', min: 0.2, max: 3.0, step: 0.1, value: 1.0 },
+    { id: 'thickness', name: '板厚 t (mm)', min: 4, max: 30, step: 0.5, value: 9 }
 ];
 
-let scene, camera, renderer, controls, meshGroup;
+let scene, camera, renderer, controls;
+let modelGroup;
+let latestMesh = null;
 const paramValues = {};
+
+let updateTimer = null;
+let computeRunning = false;
+let computeQueued = false;
+let requestVersion = 0;
+
+function setStatus(active, text) {
+    const node = document.getElementById('status-indicator');
+    if (text) node.textContent = text;
+    node.classList.toggle('active', !!active);
+}
 
 function initUI() {
     const root = document.getElementById('controls-root');
-    params.forEach(p => {
+    params.forEach((p) => {
         paramValues[p.id] = p.value;
-        
+
         const group = document.createElement('div');
         group.className = 'param-group';
-        
+
         const label = document.createElement('div');
         label.className = 'param-label';
-        label.innerText = p.name;
-        
+        label.textContent = p.name;
+
         const controlsDiv = document.createElement('div');
         controlsDiv.className = 'param-controls';
-        
+
         const slider = document.createElement('input');
         slider.type = 'range';
         slider.min = p.min;
         slider.max = p.max;
         slider.step = p.step;
         slider.value = p.value;
-        slider.id = `slide_${p.id}`;
-        
-        const numInput = document.createElement('input');
-        numInput.type = 'number';
-        numInput.min = p.min;
-        numInput.max = p.max;
-        numInput.step = p.step;
-        numInput.value = p.value;
-        numInput.id = `num_${p.id}`;
-        
-        slider.addEventListener('input', (e) => {
-            numInput.value = e.target.value;
-            paramValues[p.id] = parseFloat(e.target.value);
-            updateApp();
-        });
-        
-        numInput.addEventListener('change', (e) => {
-            let val = parseFloat(e.target.value);
-            if(val < p.min) val = p.min;
-            if(val > p.max) val = p.max;
-            slider.value = val;
-            e.target.value = val;
-            paramValues[p.id] = val;
-            updateApp();
-        });
-        
+
+        const number = document.createElement('input');
+        number.type = 'number';
+        number.min = p.min;
+        number.max = p.max;
+        number.step = p.step;
+        number.value = p.value;
+
+        function updateValue(value) {
+            let v = parseFloat(value);
+            if (!Number.isFinite(v)) v = p.value;
+            v = Math.max(p.min, Math.min(p.max, v));
+            slider.value = v;
+            number.value = v;
+            paramValues[p.id] = v;
+            scheduleGeometryUpdate();
+        }
+
+        slider.addEventListener('input', (e) => updateValue(e.target.value));
+        number.addEventListener('change', (e) => updateValue(e.target.value));
+
         controlsDiv.appendChild(slider);
-        controlsDiv.appendChild(numInput);
+        controlsDiv.appendChild(number);
         group.appendChild(label);
         group.appendChild(controlsDiv);
         root.appendChild(group);
@@ -118,200 +143,267 @@ function initUI() {
 
 function initThree() {
     const container = document.getElementById('viewer');
+
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0xeef2f5);
-    
-    camera = new THREE.PerspectiveCamera(40, container.clientWidth / container.clientHeight, 1, 3000);
-    camera.position.set(250, 350, 450);
-    
+
+    camera = new THREE.PerspectiveCamera(42, container.clientWidth / container.clientHeight, 1, 6000);
+    camera.position.set(260, 230, 360);
+
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(container.clientWidth, container.clientHeight);
-    renderer.shadowMap.enabled = true;
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
     container.appendChild(renderer.domElement);
-    
+
     controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-    
-    const ambientLight = new THREE.AmbientLight(0x777777);
-    scene.add(ambientLight);
-    
-    const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.7);
-    dirLight1.position.set(300, 500, 400);
-    scene.add(dirLight1);
 
-    const dirLight2 = new THREE.DirectionalLight(0xa0c0ff, 0.3);
-    dirLight2.position.set(-300, 200, -300);
-    scene.add(dirLight2);
-    
-    const gridHelper = new THREE.GridHelper(600, 60, 0x94a3b8, 0xdbeafe);
-    gridHelper.position.y = -1;
-    scene.add(gridHelper);
-    
-    meshGroup = new THREE.Group();
-    scene.add(meshGroup);
-    
+    scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+    const d1 = new THREE.DirectionalLight(0xffffff, 0.75);
+    d1.position.set(220, 330, 200);
+    scene.add(d1);
+    const d2 = new THREE.DirectionalLight(0xa5b4fc, 0.35);
+    d2.position.set(-180, 220, -210);
+    scene.add(d2);
+
+    const grid = new THREE.GridHelper(900, 90, 0x94a3b8, 0xcbd5e1);
+    scene.add(grid);
+
+    modelGroup = new THREE.Group();
+    scene.add(modelGroup);
+
     window.addEventListener('resize', () => {
         camera.aspect = container.clientWidth / container.clientHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(container.clientWidth, container.clientHeight);
     });
-    
+
     animate();
 }
 
 function animate() {
     requestAnimationFrame(animate);
-    controls.update();
-    renderer.render(scene, camera);
+    if (controls) controls.update();
+    if (renderer && scene && camera) renderer.render(scene, camera);
 }
 
-// 安定したネイティブ幾何演算による3Dパーツ作成
-function updateApp() {
-    while(meshGroup.children.length > 0){
-        const obj = meshGroup.children[0];
-        if(obj.geometry) obj.geometry.dispose();
-        if(obj.material) obj.material.dispose();
-        meshGroup.remove(obj);
+function scheduleGeometryUpdate() {
+    requestVersion += 1;
+    if (updateTimer) clearTimeout(updateTimer);
+    setStatus(true, 'JSCAD幾何計算中...');
+    updateTimer = setTimeout(() => runGeometryUpdate(requestVersion), 10);
+}
+
+function runGeometryUpdate(version) {
+    if (computeRunning) {
+        computeQueued = true;
+        return;
     }
 
+    computeRunning = true;
+    setTimeout(() => {
+        const dims = calculateDimensions();
+        const result = buildSolidWithJscad(dims);
+
+        if (version === requestVersion) {
+            applyModel(result.geometry, dims);
+            updateCutList(dims);
+        }
+
+        computeRunning = false;
+
+        if (computeQueued || version !== requestVersion) {
+            computeQueued = false;
+            runGeometryUpdate(requestVersion);
+            return;
+        }
+
+        setStatus(false);
+    }, 10);
+}
+
+function calculateDimensions() {
     const d = paramValues.baseD;
     const W = d * paramValues.ratioX;
     const L = d * paramValues.ratioY;
     const H = d * paramValues.ratioZ;
-    const t = paramValues.thickness;
-    
-    // 自動決定ルール
-    const gd = parseFloat((t / 3).toFixed(2)); // 溝深さ
-    const gw = parseFloat((t / 3).toFixed(2)); // 溝幅
-    const gh = t;                             // 溝の位置(底面から)
+    const t = Math.min(paramValues.thickness, W / 4, L / 4, H / 2);
 
-    const woodMaterial = new THREE.MeshStandardMaterial({
-        color: 0xd97706,
-        roughness: 0.5,
-        metalness: 0.1,
-        side: THREE.DoubleSide
-    });
+    const grooveWidth = t / 3;
+    const grooveDepth = t / 3;
+    const grooveBottom = -H / 2 + t;
+    const grooveCenterY = grooveBottom + grooveWidth / 2;
 
-    const wireMaterial = new THREE.MeshBasicMaterial({
-        color: 0x78350f,
-        wireframe: true,
-        transparent: true,
-        opacity: 0.15
-    });
+    return { d, W, L, H, t, grooveWidth, grooveDepth, grooveBottom, grooveCenterY };
+}
 
-    function createPanel(geometry, x, y, z, rotX=0, rotY=0, rotZ=0) {
-        const mesh = new THREE.Mesh(geometry, woodMaterial);
-        const wire = new THREE.Mesh(geometry, wireMaterial);
-        const group = new THREE.Group();
-        group.add(mesh, wire);
-        group.position.set(x, y, z);
-        group.rotation.set(rotX, rotY, rotZ);
-        meshGroup.add(group);
+function buildSolidWithJscad(d) {
+    const modeling = window.jscadModeling;
+    const { cuboid } = modeling.primitives;
+    const { subtract, union } = modeling.booleans;
+    const { translate, rotateX } = modeling.transforms;
+    const { geom3 } = modeling.geometries;
+
+    const outer = cuboid({ size: [d.W, d.H, d.L] });
+
+    const inner = translate(
+        [0, d.t / 2, 0],
+        cuboid({ size: [Math.max(1, d.W - 2 * d.t), Math.max(1, d.H - d.t), Math.max(1, d.L - 2 * d.t)] })
+    );
+
+    const grooveLenX = Math.max(1, d.W - 2 * d.t);
+    const grooveLenZ = Math.max(1, d.L - 2 * d.t);
+
+    const grooveLeft = translate(
+        [-d.W / 2 + d.t - d.grooveDepth / 2, d.grooveCenterY, 0],
+        cuboid({ size: [d.grooveDepth, d.grooveWidth, grooveLenZ] })
+    );
+    const grooveRight = translate(
+        [d.W / 2 - d.t + d.grooveDepth / 2, d.grooveCenterY, 0],
+        cuboid({ size: [d.grooveDepth, d.grooveWidth, grooveLenZ] })
+    );
+    const grooveBack = translate(
+        [0, d.grooveCenterY, d.L / 2 - d.t + d.grooveDepth / 2],
+        cuboid({ size: [grooveLenX, d.grooveWidth, d.grooveDepth] })
+    );
+    const grooveFront = translate(
+        [0, d.grooveCenterY, -d.L / 2 + d.t - d.grooveDepth / 2],
+        cuboid({ size: [grooveLenX, d.grooveWidth, d.grooveDepth] })
+    );
+
+    const slopeCutter = translate(
+        [0, d.H / 2 - d.t * 0.6, -d.L / 2 + d.t * 0.2],
+        rotateX(Math.PI / 4, cuboid({ size: [d.W * 1.2, d.H, d.H] }))
+    );
+
+    const shell = subtract(outer, inner, grooveLeft, grooveRight, grooveBack, grooveFront, slopeCutter);
+
+    const bottomPlate = translate(
+        [0, d.grooveCenterY, 0],
+        cuboid({
+            size: [
+                Math.max(1, d.W - 2 * d.t + 2 * d.grooveDepth),
+                d.grooveWidth,
+                Math.max(1, d.L - 2 * d.t + 2 * d.grooveDepth)
+            ]
+        })
+    );
+
+    const unified = union(shell, bottomPlate);
+
+    return { geometry: geom3.toTriangles(unified) };
+}
+
+function jscadTrianglesToThreeGeometry(triangles) {
+    const positions = new Float32Array(triangles.length * 9);
+    const normals = new Float32Array(triangles.length * 9);
+
+    let p = 0;
+    for (let i = 0; i < triangles.length; i += 1) {
+        const tri = triangles[i];
+        const ax = tri[0][0], ay = tri[0][1], az = tri[0][2];
+        const bx = tri[1][0], by = tri[1][1], bz = tri[1][2];
+        const cx = tri[2][0], cy = tri[2][1], cz = tri[2][2];
+
+        positions[p] = ax; positions[p + 1] = ay; positions[p + 2] = az;
+        positions[p + 3] = bx; positions[p + 4] = by; positions[p + 5] = bz;
+        positions[p + 6] = cx; positions[p + 7] = cy; positions[p + 8] = cz;
+
+        const abx = bx - ax, aby = by - ay, abz = bz - az;
+        const acx = cx - ax, acy = cy - ay, acz = cz - az;
+        let nx = aby * acz - abz * acy;
+        let ny = abz * acx - abx * acz;
+        let nz = abx * acy - aby * acx;
+        const nLen = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+        nx /= nLen; ny /= nLen; nz /= nLen;
+
+        normals[p] = nx; normals[p + 1] = ny; normals[p + 2] = nz;
+        normals[p + 3] = nx; normals[p + 4] = ny; normals[p + 5] = nz;
+        normals[p + 6] = nx; normals[p + 7] = ny; normals[p + 8] = nz;
+        p += 9;
     }
 
-    // 1. 側板 (左右) - 溝付き
-    const sideShape = new THREE.Shape();
-    sideShape.moveTo(0, 0);
-    sideShape.lineTo(L, 0);
-    sideShape.lineTo(L, H);
-    sideShape.lineTo(0, H);
-    
-    // 45度の斜めカット（飛び出し口）を表現
-    const frontSlopeShape = new THREE.Shape();
-    frontSlopeShape.moveTo(0, 0);
-    frontSlopeShape.lineTo(L, 0);
-    frontSlopeShape.lineTo(L, H);
-    frontSlopeShape.lineTo(t * 2, H); // 45度のシンプルな傾斜のスタート
-    frontSlopeShape.lineTo(0, H - (t * 2));
-    
-    // 側板の押し出し
-    const sideGeom = new THREE.ExtrudeGeometry(frontSlopeShape, { depth: t, bevelEnabled: false });
-    sideGeom.center();
-    
-    // 左右に配置 (留め継ぎを考慮して位置合わせ)
-    createPanel(sideGeom, -W/2 + t/2, H/2, 0, 0, Math.PI/2, 0);
-    createPanel(sideGeom,  W/2 - t/2, H/2, 0, 0, -Math.PI/2, 0);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    geometry.computeBoundingSphere();
+    return geometry;
+}
 
-    // 2. 背板
-    const backGeom = new THREE.BoxGeometry(W - t*2, H, t);
-    createPanel(backGeom, 0, H/2, L/2 - t/2);
+function clearModelGroup() {
+    while (modelGroup.children.length > 0) {
+        const child = modelGroup.children[0];
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+            if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose());
+            else child.material.dispose();
+        }
+        modelGroup.remove(child);
+    }
+}
 
-    // 3. 前板 (シンプルな45度傾斜板)
-    const frontPlateHeight = Math.sqrt(Math.pow(t*2, 2) + Math.pow(H - (t*2), 2));
-    const frontAngle = Math.atan2(H - (t*2), t*2);
-    const frontGeom = new THREE.BoxGeometry(W - t*2, frontPlateHeight, t);
-    createPanel(frontGeom, 0, (H - t*2)/2, -L/2 + t + (t*2)/2, -frontAngle + Math.PI/2, 0, 0);
+function applyModel(triangles, dims) {
+    clearModelGroup();
 
-    // 4. 底板 (溝に収まるサイズ)
-    const bottomW = W - t*2 + gd*2;
-    const bottomL = L - t*2 + gd*2 - (t*2); // 傾斜を逃げた奥行き
-    const bottomGeom = new THREE.BoxGeometry(bottomW, gw, bottomL);
-    createPanel(bottomGeom, 0, gh + gw/2, - (t*2)/2);
+    const geometry = jscadTrianglesToThreeGeometry(triangles);
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+        color: 0xc97a2b,
+        roughness: 0.58,
+        metalness: 0.06
+    }));
 
-    // 全体を中心にオフセット
-    meshGroup.position.set(0, -H/4, 0);
+    const edges = new THREE.LineSegments(
+        new THREE.EdgesGeometry(geometry),
+        new THREE.LineBasicMaterial({ color: 0x5b3414 })
+    );
 
-    // 木取り図の出力
-    const innerW = (W - t*2).toFixed(1);
-    const innerL = (L - t*2 - t*2).toFixed(1);
-    const innerH = (H - t - gh - gw).toFixed(1);
+    modelGroup.add(mesh);
+    modelGroup.add(edges);
+    latestMesh = mesh;
 
-    const text = `【木板カットリスト (比率変形連動・寸法: mm)】
---------------------------------------------------
-■ 計算されたボックス外寸:
-   幅: ${W.toFixed(1)} × 奥行: ${L.toFixed(1)} × 高さ: ${H.toFixed(1)}
+    modelGroup.position.set(0, dims.H / 2, 0);
+}
 
-■ 側板 (左右・計2枚):
-   厚み: ${t} × 奥行: ${L.toFixed(1)} × 高さ: ${H.toFixed(1)}
-   ※ 内側に幅: ${gw}mm、深さ: ${gd}mm のはめ込み溝加工
-   ※ 前方にシンプルな45度傾斜カット
+function updateCutList(d) {
+    const innerW = Math.max(0, d.W - 2 * d.t);
+    const innerL = Math.max(0, d.L - 2 * d.t);
+    const frontPanelHeight = Math.max(0, d.H - d.t);
+    const bottomW = Math.max(0, innerW + 2 * d.grooveDepth);
+    const bottomL = Math.max(0, innerL + 2 * d.grooveDepth);
 
-■ 背板 (1枚):
-   厚み: ${t} × 幅: ${innerW} × 高さ: ${H.toFixed(1)}
-   ※ 左右端に留め継ぎ（45度）加工
+    const text = `【木取り図 / カットリスト（mm）】
+----------------------------------------
+外寸: 幅 ${d.W.toFixed(1)} × 奥行 ${d.L.toFixed(1)} × 高さ ${d.H.toFixed(1)}
 
-■ 前板 (飛び出し口・1枚):
-   厚み: ${t} × 幅: ${innerW} × 傾斜長さ: ${frontPlateHeight.toFixed(1)}
+側板（2枚）: 厚み ${d.t.toFixed(1)} × 奥行 ${d.L.toFixed(1)} × 高さ ${d.H.toFixed(1)}
+背板（1枚）: 厚み ${d.t.toFixed(1)} × 幅 ${(innerW).toFixed(1)} × 高さ ${d.H.toFixed(1)}
+前板（1枚）: 厚み ${d.t.toFixed(1)} × 幅 ${(innerW).toFixed(1)} × 高さ ${frontPanelHeight.toFixed(1)}（45度傾斜）
+底板（1枚）: 厚み ${d.grooveWidth.toFixed(1)} × 幅 ${bottomW.toFixed(1)} × 奥行 ${bottomL.toFixed(1)}
 
-■ 底板 (1枚):
-   厚み: ${gw} × 幅(間口): ${bottomW.toFixed(1)} × 奥行: ${bottomL.toFixed(1)}
---------------------------------------------------
-【自動設定された溝の仕様】
-  ・底面から溝の下ラインまでの高さ: ${gh} mm (板厚 t と同値)
-  ・溝の幅および深さ: ${gw} mm (板厚 t の 1/3)
-  ・箱の内部有効クリアランス幅: ${innerW} mm`;
+【自動設定された溝仕様】
+溝幅: ${d.grooveWidth.toFixed(1)}
+溝深さ: ${d.grooveDepth.toFixed(1)}
+溝位置: 底面から ${d.t.toFixed(1)} の高さ`; 
 
-    document.getElementById('cutlist-text').innerText = text;
+    document.getElementById('cutlist-text').textContent = text;
 }
 
 function downloadSTL() {
-    if (meshGroup.children.length === 0) return;
+    if (!latestMesh) return;
     const exporter = new THREE.STLExporter();
-    
-    // 全体を1つのオブジェクトとしてエクスポート
-    const tempGroup = new THREE.Group();
-    meshGroup.children.forEach(child => {
-        if(child.children[0]) {
-            const clone = child.children[0].clone();
-            clone.position.copy(child.position);
-            clone.rotation.copy(child.rotation);
-            tempGroup.add(clone);
-        }
-    });
-
-    const result = exporter.parse(tempGroup, { binary: true });
+    const result = exporter.parse(latestMesh, { binary: true });
     const blob = new Blob([result], { type: 'application/octet-stream' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `parametric_partsbox_ratio.stl`;
+    link.download = 'partsbox-solid.stl';
     link.click();
+    URL.revokeObjectURL(link.href);
 }
 
 window.onload = () => {
     initUI();
     initThree();
-    updateApp();
+    scheduleGeometryUpdate();
 };
 </script>
 </body>
