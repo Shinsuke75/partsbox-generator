@@ -70,7 +70,7 @@
 const PARAM_DEFS = [
     { id: 'baseD',     name: '基本基準サイズ d (mm)', min: 50,  max: 300, step: 1,   value: 140 },
     { id: 'ratioX',    name: '幅比率 (X比率)',        min: 0.2, max: 3.0, step: 0.1, value: 1.0 },
-    { id: 'ratioY',    name: '奥行比率 (Y比率)',      min: 0.2, max: 3.0, step: 0.1, value: 1.0 }, // ← 修正: 1.5→1.0
+    { id: 'ratioY',    name: '奥行比率 (Y比率)',      min: 0.2, max: 3.0, step: 0.1, value: 1.0 },
     { id: 'ratioZ',    name: '高さ比率 (Z比率)',      min: 0.2, max: 3.0, step: 0.01,value: 1.5 },
     { id: 'thickness', name: '板厚 t (mm)',           min: 3,   max: 30,  step: 0.5, value: 9   }
 ];
@@ -144,7 +144,6 @@ function initThree() {
     scene.background = new THREE.Color(0xeef2f5);
 
     camera = new THREE.PerspectiveCamera(42, container.clientWidth / container.clientHeight, 1, 6000);
-    // フロント側（Z マイナス）から箱の傾斜開口部が見えるように配置
     camera.position.set(280, 220, -380);
 
     renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -189,7 +188,6 @@ function scheduleGeometryUpdate() {
     requestVersion += 1;
     if (updateTimer) clearTimeout(updateTimer);
     setStatus(true, 'JSCAD 計算中...');
-    // 操作が落ち着いてから 80ms 後に計算開始（UI がもたつかないようデバウンス）
     updateTimer = setTimeout(() => runGeometryUpdate(requestVersion), 80);
 }
 
@@ -200,7 +198,6 @@ function runGeometryUpdate(version) {
     }
     computeRunning = true;
 
-    // setTimeout(0) でレンダリングキューを一度解放してから重い計算へ
     setTimeout(() => {
         try {
             const dims = calculateDimensions();
@@ -231,12 +228,10 @@ function calculateDimensions() {
     const W = d * paramValues.ratioX;
     const L = d * paramValues.ratioY;
     const H = d * paramValues.ratioZ;
-    // 板厚が箱の最小寸法を超えないようにクランプ
     const t = Math.min(paramValues.thickness, W / 4, L / 4, H / 2.5);
 
     const grooveWidth  = t / 3;
     const grooveDepth  = t / 3;
-    // 溝の中心Y座標: 底面から t の位置に溝の下端が来る
     const grooveCenterY = -H / 2 + 5 * t / 6;
 
     return { d, W, L, H, t, grooveWidth, grooveDepth, grooveCenterY };
@@ -254,75 +249,60 @@ function buildSolidWithJscad(dims) {
 
     const d = dims;
 
-    // 内側寸法
-    const innerW = Math.max(1, d.W - 2 * d.t);  // 内側幅（X方向）
-    const innerD = Math.max(1, d.L - 2 * d.t);  // 内側奥行き（Z方向）
+    const innerW = Math.max(1, d.W - 2 * d.t);
+    const innerD = Math.max(1, d.L - 2 * d.t);
 
-    // 外殻ボックス（中央原点）
+    // 外殻ボックス
     const outer = cuboid({ size: [d.W, d.H, d.L] });
 
-    // 内側くり抜き（上面開放・底と三方に板厚を残す）
-    // Y: -H/2+t〜H/2（底板厚 t、上面開放）
+    // 内側くり抜き（底板厚t、上面開放）
     const inner = translate(
         [0, d.t / 2, 0],
         cuboid({ size: [innerW, Math.max(1, d.H - d.t), innerD] })
     );
 
-    // ─── 底板はめ込み溝（側板・背板の3面のみ。前面は傾斜で開放）───
+    // 底板はめ込み溝（左・右・背板の3面のみ、前面は開放）
     const grooveLeft = translate(
         [-d.W / 2 + d.t - d.grooveDepth / 2, d.grooveCenterY, 0],
-        cuboid({ size: [d.grooveDepth, d.grooveWidth, innerD] })  // Z=内側奥行き
+        cuboid({ size: [d.grooveDepth, d.grooveWidth, innerD] })
     );
     const grooveRight = translate(
         [ d.W / 2 - d.t + d.grooveDepth / 2, d.grooveCenterY, 0],
-        cuboid({ size: [d.grooveDepth, d.grooveWidth, innerD] })  // Z=内側奥行き
+        cuboid({ size: [d.grooveDepth, d.grooveWidth, innerD] })
     );
     const grooveBack = translate(
         [0, d.grooveCenterY, d.L / 2 - d.t + d.grooveDepth / 2],
-        cuboid({ size: [innerW, d.grooveWidth, d.grooveDepth] })  // X=内側幅
+        cuboid({ size: [innerW, d.grooveWidth, d.grooveDepth] })
     );
 
-    // ─── 傾斜カット（数学的に正確な計算）────────────────────────
-    //
-    // 切断平面の定義:
-    //   A = (y=H/2,  z=L/2-t)  ← 背板内面の上端
-    //   B = (y=-H/2, z=-L/2)   ← 前面の下端（前板は完全に開放）
-    //   中点 M = (y=0, z=-t/2)
-    //
-    // 平面方程式: (L-t)·y − H·z = H·t/2  → 検証: A,B どちらも満たす ✓
-    //
-    // 除去側（前上部）への外向き法線: n = (ny=(L-t), nz=-H) / mag
-    //   → cos(α) = (L-t)/mag, sin(α) = -H/mag なので α = atan2(-H, L-t)
-    //
-    // カッター中心 = M + (H_c/2)·n  (底面が切断平面上に来るよう配置)
-    //
-    const Leff  = d.L - d.t;                              // L-t
-    const mag   = Math.sqrt(d.H * d.H + Leff * Leff);    // |A→B|
-    const alpha = Math.atan2(-d.H, Leff);                 // rotateX 角度
-    const H_c   = 2.5 * mag;                              // 十分大きいカッターサイズ
-
-    const cutter_y = (H_c / 2) * (Leff / mag);            // 0 + offset
-    const cutter_z = (-d.t / 2) - (H_c / 2) * (d.H / mag); // -t/2 + offset
+    // 傾斜カット
+    // 切断平面: A=(y=H/2, z=L/2-t)  B=(y=-H/2, z=-L/2)
+    // 中点M=(y=0, z=-t/2), 法線方向=(L-t, -H)/mag
+    const Leff  = d.L - d.t;
+    const mag   = Math.sqrt(d.H * d.H + Leff * Leff);
+    const alpha = Math.atan2(-d.H, Leff);
+    const H_c   = 2.5 * mag;
+    const cutter_y = (H_c / 2) * (Leff / mag);
+    const cutter_z = (-d.t / 2) - (H_c / 2) * (d.H / mag);
 
     const slopeCutter = translate(
         [0, cutter_y, cutter_z],
         rotateX(alpha, cuboid({ size: [d.W * 1.5, H_c, H_c] }))
     );
 
-    // 外殻 − (内部 + 溝3面 + 傾斜)
     const shell = subtract(outer, inner, grooveLeft, grooveRight, grooveBack, slopeCutter);
 
-    // 底板ソリッド（前面は開放なので背板溝のみ延伸）
-    const bottomW     = Math.max(1, innerW + 2 * d.grooveDepth);       // 左右溝に差し込む分
-    const bottomSizeZ = Math.max(1, innerD + d.grooveDepth);            // 背板溝にのみ差し込む
+    // 底板（左右溝・背板溝にはまり込む）
+    const bottomW     = Math.max(1, innerW + 2 * d.grooveDepth);
+    const bottomSizeZ = Math.max(1, innerD + d.grooveDepth);
     const bottomPlate = translate(
-        [0, d.grooveCenterY, d.grooveDepth / 2],   // 背板側にわずかにシフト
+        [0, d.grooveCenterY, d.grooveDepth / 2],
         cuboid({ size: [bottomW, d.grooveWidth, bottomSizeZ] })
     );
 
     const unified = union(shell, bottomPlate);
 
-    // geom3.toPolygons() でポリゴン取得 → ファン三角形分割
+    // toPolygons() → ファン三角形分割
     const polygons = geom3.toPolygons(unified);
     const triangles = [];
     for (const poly of polygons) {
@@ -350,7 +330,6 @@ function trianglesToThreeGeometry(triangles) {
         positions[p+3] = bx; positions[p+4] = by; positions[p+5] = bz;
         positions[p+6] = cx; positions[p+7] = cy; positions[p+8] = cz;
 
-        // 面法線
         const abx = bx-ax, aby = by-ay, abz = bz-az;
         const acx = cx-ax, acy = cy-ay, acz = cz-az;
         let nx = aby*acz - abz*acy;
@@ -405,7 +384,6 @@ function applyModel(triangles, dims) {
     modelGroup.add(edges);
     latestMesh = mesh;
 
-    // グリッドの上に乗せる
     modelGroup.position.set(0, dims.H / 2, 0);
 }
 
@@ -414,10 +392,8 @@ function updateCutList(d) {
     const innerW  = Math.max(0, d.W - 2 * d.t);
     const innerD  = Math.max(0, d.L - 2 * d.t);
     const bottomW = Math.max(0, innerW + 2 * d.grooveDepth);
-    const bottomD = Math.max(0, innerD + d.grooveDepth); // 前面は溝なし
+    const bottomD = Math.max(0, innerD + d.grooveDepth);
 
-    // 側板の形状: 台形（背面高さH、前面ほぼ0の傾斜）
-    // 傾斜角 = atan2(H, L-t)
     const Leff       = d.L - d.t;
     const slopeAngle = Math.atan2(d.H, Leff) * 180 / Math.PI;
 
@@ -439,7 +415,7 @@ function updateCutList(d) {
 【自動設定された溝仕様】
   溝幅   : ${d.grooveWidth.toFixed(1)} mm（板厚 ${d.t.toFixed(1)} の 1/3）
   溝深さ : ${d.grooveDepth.toFixed(1)} mm（板厚 ${d.t.toFixed(1)} の 1/3）
-  溝位置 : 底面から ${d.t.toFixed(1)} mm 上
+  溝位置 : 底面から ${(5*d.t/6).toFixed(1)} mm 上（中心）
   溝設置面: 側板（左右）+ 背板 の3面のみ（前面は開放）`;
 }
 
