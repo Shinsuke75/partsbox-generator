@@ -50,7 +50,7 @@
             ・底板溝の幅 = 板厚 t の 1/3<br>
             ・底板溝の深さ = 板厚 t の 1/3<br>
             ・溝位置 = 底面から板厚 t の高さ<br>
-            ・前方飛び出し口 = 45度傾斜カット
+            ・前面ノーズ = 45°矢印形（H/2 前方突出）
         </div>
         <button id="btn-download">STL をエクスポート</button>
     </div>
@@ -230,11 +230,12 @@ function calculateDimensions() {
     const H = d * paramValues.ratioZ;
     const t = Math.min(paramValues.thickness, W / 4, L / 4, H / 2.5);
 
-    const grooveWidth  = t / 3;
-    const grooveDepth  = t / 3;
+    const grooveWidth   = t / 3;
+    const grooveDepth   = t / 3;
     const grooveCenterY = -H / 2 + 5 * t / 6;
+    const noseExt       = H / 2;  // 前方突出量（矢印先端まで）
 
-    return { d, W, L, H, t, grooveWidth, grooveDepth, grooveCenterY };
+    return { d, W, L, H, t, grooveWidth, grooveDepth, grooveCenterY, noseExt };
 }
 
 // ─── JSCAD CSG → 三角形配列 ─────────────────────────────────────
@@ -242,17 +243,18 @@ function buildSolidWithJscad(dims) {
     const modeling = window.jscadModeling;
     if (!modeling) throw new Error('jscadModeling が読み込まれていません');
 
-    const { cuboid }             = modeling.primitives;
-    const { subtract, union }    = modeling.booleans;
-    const { translate, rotateX } = modeling.transforms;
-    const { geom3 }              = modeling.geometries;
+    const { cuboid, polygon }             = modeling.primitives;
+    const { subtract, union }             = modeling.booleans;
+    const { translate, rotateX, rotateY } = modeling.transforms;
+    const { extrudeLinear }               = modeling.extrusions;
+    const { geom3 }                       = modeling.geometries;
 
     const d = dims;
 
     const innerW = Math.max(1, d.W - 2 * d.t);
     const innerD = Math.max(1, d.L - 2 * d.t);
 
-    // 外殻ボックス
+    // ── 外殻ボックス（前面なし） ──────────────────────────────────
     const outer = cuboid({ size: [d.W, d.H, d.L] });
 
     // 内側くり抜き（底板厚t、上面開放）
@@ -261,38 +263,67 @@ function buildSolidWithJscad(dims) {
         cuboid({ size: [innerW, Math.max(1, d.H - d.t), innerD] })
     );
 
-    // 底板はめ込み溝（左・右・背板の3面のみ、前面は開放）
+    // 前面の壁を除去（前面は完全開放）
+    const frontCutter = translate(
+        [0, 0, -(d.L / 2 - d.t / 2)],
+        cuboid({ size: [innerW + 0.1, d.H + 0.1, d.t + 0.1] })
+    );
+
+    // 底板はめ込み溝（左・右は前面まで延長、背板は通常）
+    const grooveExtZ = innerD + d.t;
     const grooveLeft = translate(
-        [-d.W / 2 + d.t - d.grooveDepth / 2, d.grooveCenterY, 0],
-        cuboid({ size: [d.grooveDepth, d.grooveWidth, innerD] })
+        [-d.W / 2 + d.t - d.grooveDepth / 2, d.grooveCenterY, -d.t / 2],
+        cuboid({ size: [d.grooveDepth, d.grooveWidth, grooveExtZ] })
     );
     const grooveRight = translate(
-        [ d.W / 2 - d.t + d.grooveDepth / 2, d.grooveCenterY, 0],
-        cuboid({ size: [d.grooveDepth, d.grooveWidth, innerD] })
+        [ d.W / 2 - d.t + d.grooveDepth / 2, d.grooveCenterY, -d.t / 2],
+        cuboid({ size: [d.grooveDepth, d.grooveWidth, grooveExtZ] })
     );
     const grooveBack = translate(
         [0, d.grooveCenterY, d.L / 2 - d.t + d.grooveDepth / 2],
         cuboid({ size: [innerW, d.grooveWidth, d.grooveDepth] })
     );
 
-    // 傾斜カット
-    // 切断平面: A=(y=H/2, z=L/2-t)  B=(y=-H/2, z=-L/2)
-    // 中点M=(y=0, z=-t/2), 法線方向=(L-t, -H)/mag
-    const Leff  = d.L - d.t;
-    const mag   = Math.sqrt(d.H * d.H + Leff * Leff);
-    const alpha = Math.atan2(-d.H, Leff);
-    const H_c   = 2.5 * mag;
-    const cutter_y = (H_c / 2) * (Leff / mag);
-    const cutter_z = (-d.t / 2) - (H_c / 2) * (d.H / mag);
+    const shell = subtract(outer, inner, frontCutter, grooveLeft, grooveRight, grooveBack);
 
-    const slopeCutter = translate(
-        [0, cutter_y, cutter_z],
-        rotateX(alpha, cuboid({ size: [d.W * 1.5, H_c, H_c] }))
+    // ── 前面ノーズ（矢印形プリズム） ─────────────────────────────
+    // 側面から見ると二等辺三角形：前面からH/2前方に突出、先端は中央高さ（45°）
+    // polygon XY平面: X=深さ方向(前=-負), Y=高さ方向
+    // extrudeLinear で Z方向（幅）に押し出し → rotateY(-90°) で軸変換
+    const noseExt = d.noseExt;
+
+    const outerNoseProf = polygon({ points: [
+        [0,        d.H / 2],
+        [-noseExt, 0       ],
+        [0,       -d.H / 2]
+    ]});
+    const outerNoseRaw = extrudeLinear({ height: d.W }, outerNoseProf);
+    // rotateY(-PI/2): profileX→worldZ, extrusionZ→world(-X)
+    // translate([W/2, 0, -L/2]): X中央揃え、Z=ボックス前面に接合
+    const outerNose = translate(
+        [d.W / 2, 0, -d.L / 2],
+        rotateY(-Math.PI / 2, outerNoseRaw)
     );
 
-    const shell = subtract(outer, inner, grooveLeft, grooveRight, grooveBack, slopeCutter);
+    // 内側三角（板厚tオフセット。45°面は法線方向にtずつ → 各軸t/√2）
+    const sq2 = Math.SQRT2;
+    const innerNoseHalfH = Math.max(0.1, d.H / 2 - d.t / sq2);
+    const innerNoseExt   = Math.max(0.1, noseExt - d.t * sq2);
 
-    // 底板（左右溝・背板溝にはまり込む）
+    const innerNoseProf = polygon({ points: [
+        [ d.t / sq2,    innerNoseHalfH],
+        [-innerNoseExt, 0             ],
+        [ d.t / sq2,   -innerNoseHalfH]
+    ]});
+    const innerNoseRaw = extrudeLinear({ height: innerW }, innerNoseProf);
+    const innerNose = translate(
+        [innerW / 2, 0, -d.L / 2],
+        rotateY(-Math.PI / 2, innerNoseRaw)
+    );
+
+    const noseShell = subtract(outerNose, innerNose);
+
+    // ── 底板（左右溝・背板溝にはまり込む） ────────────────────────
     const bottomW     = Math.max(1, innerW + 2 * d.grooveDepth);
     const bottomSizeZ = Math.max(1, innerD + d.grooveDepth);
     const bottomPlate = translate(
@@ -300,7 +331,7 @@ function buildSolidWithJscad(dims) {
         cuboid({ size: [bottomW, d.grooveWidth, bottomSizeZ] })
     );
 
-    const unified = union(shell, bottomPlate);
+    const unified = union(shell, noseShell, bottomPlate);
 
     // toPolygons() → ファン三角形分割
     const polygons = geom3.toPolygons(unified);
@@ -393,18 +424,20 @@ function updateCutList(d) {
     const innerD  = Math.max(0, d.L - 2 * d.t);
     const bottomW = Math.max(0, innerW + 2 * d.grooveDepth);
     const bottomD = Math.max(0, innerD + d.grooveDepth);
-
-    const Leff       = d.L - d.t;
-    const slopeAngle = Math.atan2(d.H, Leff) * 180 / Math.PI;
+    const noseExt = d.noseExt;
 
     document.getElementById('cutlist-text').textContent =
 `【木取り図 / カットリスト（mm）】
 ────────────────────────────────────────
 外寸: 幅 ${d.W.toFixed(1)} × 奥行 ${d.L.toFixed(1)} × 高さ ${d.H.toFixed(1)}
+ノーズ突出: ${noseExt.toFixed(1)} mm（前方 H/2、45°矢印形）
 
-側板（左・右 各1枚 計2枚）※台形
-  厚み ${d.t.toFixed(1)} × 奥行 ${d.L.toFixed(1)} × 背面高さ ${d.H.toFixed(1)}
-  （前面に向けて ${slopeAngle.toFixed(1)}° で傾斜、前面高さ ≈ 0）
+側板（左・右 各1枚 計2枚）※ペンタゴン形状
+  厚み ${d.t.toFixed(1)} × 背面高さ ${d.H.toFixed(1)} × 奥行(本体) ${d.L.toFixed(1)}
+  ※前方に向けて45°で先端（高さ0）に収束する矢印形
+
+前面ノーズ板（1枚）※二等辺三角形断面
+  厚み ${d.t.toFixed(1)} × 幅 ${innerW.toFixed(1)} × 突出量 ${noseExt.toFixed(1)}
 
 背板（1枚）
   厚み ${d.t.toFixed(1)} × 幅 ${innerW.toFixed(1)} × 高さ ${d.H.toFixed(1)}
@@ -416,7 +449,7 @@ function updateCutList(d) {
   溝幅   : ${d.grooveWidth.toFixed(1)} mm（板厚 ${d.t.toFixed(1)} の 1/3）
   溝深さ : ${d.grooveDepth.toFixed(1)} mm（板厚 ${d.t.toFixed(1)} の 1/3）
   溝位置 : 底面から ${(5*d.t/6).toFixed(1)} mm 上（中心）
-  溝設置面: 側板（左右）+ 背板 の3面のみ（前面は開放）`;
+  溝設置面: 側板（左右）+ 背板 の3面`;
 }
 
 // ─── STL エクスポート ─────────────────────────────────────────────
