@@ -135,13 +135,16 @@
     </main>
   </div>
 
-  <script src="https://unpkg.com/@jscad/modeling@2.2.0/dist/index.min.js"></script>
   <script type="module">
-    import * as THREE from 'https://unpkg.com/three@0.164.1/build/three.module.js';
-    import { OrbitControls } from 'https://unpkg.com/three@0.164.1/examples/jsm/controls/OrbitControls.js';
-    import { STLExporter } from 'https://unpkg.com/three@0.164.1/examples/jsm/exporters/STLExporter.js';
-
-    const { primitives, booleans, transforms, extrusions, geometries, measurements } = window.jscadModeling;
+    let THREE;
+    let OrbitControls;
+    let STLExporter;
+    let primitives;
+    let booleans;
+    let transforms;
+    let extrusions;
+    let geometries;
+    let measurements;
 
     const CONFIG = [
       { key: 'outerWidth', label: '外寸 幅', min: 100, max: 300, step: 0.01, value: 145 },
@@ -161,27 +164,51 @@
     const downloadBtn = document.getElementById('downloadBtn');
 
     let latestMesh = null;
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xeceff1);
-    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
-    camera.position.set(260, 220, 260);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    document.getElementById('viewer').appendChild(renderer.domElement);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.target.set(0, 50, 0);
-
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.75);
-    dirLight.position.set(180, 250, 100);
-    scene.add(dirLight);
-    scene.add(new THREE.GridHelper(600, 60, 0xb0b8c0, 0xd2d7dc));
+    let scene = null;
+    let camera = null;
+    let renderer = null;
+    let controls = null;
+    let isAnimating = false;
 
     function mm(v) {
       return `${Number(v).toFixed(2)} mm`;
+    }
+
+    async function loadLibraries() {
+      const [threeMod, orbitMod, stlMod, jscadModeling] = await Promise.all([
+        import('https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js'),
+        import('https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/controls/OrbitControls.js'),
+        import('https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/exporters/STLExporter.js'),
+        import('https://cdn.jsdelivr.net/npm/@jscad/modeling@2.12.6/+esm')
+      ]);
+      THREE = threeMod;
+      OrbitControls = orbitMod.OrbitControls;
+      STLExporter = stlMod.STLExporter;
+      ({ primitives, booleans, transforms, extrusions, geometries, measurements } = jscadModeling);
+    }
+
+    function initializeViewer() {
+      const viewer = document.getElementById('viewer');
+      if (!viewer) return;
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xeceff1);
+      camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
+      camera.position.set(260, 220, 260);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      viewer.appendChild(renderer.domElement);
+
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.target.set(0, 50, 0);
+
+      scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+      const dirLight = new THREE.DirectionalLight(0xffffff, 0.75);
+      dirLight.position.set(180, 250, 100);
+      scene.add(dirLight);
+      scene.add(new THREE.GridHelper(600, 60, 0xb0b8c0, 0xd2d7dc));
     }
 
     function validateParams(params) {
@@ -301,6 +328,7 @@
     }
 
     function renderModel(geom3) {
+      if (!scene || !camera || !controls) return;
       if (latestMesh) {
         scene.remove(latestMesh);
         latestMesh.geometry.dispose();
@@ -365,6 +393,7 @@
     }
 
     function update() {
+      if (!primitives || !booleans || !transforms || !extrusions || !geometries || !measurements) return;
       const err = validateParams(state);
       errorEl.textContent = err;
       downloadBtn.disabled = Boolean(err);
@@ -413,10 +442,29 @@
       return wrap;
     }
 
-    for (const item of CONFIG) controlsRoot.appendChild(createField(item));
+    async function initializeApp() {
+      if (!controlsRoot || !cutlistText || !errorEl || !downloadBtn) return;
+      if (controlsRoot.children.length === 0) {
+        for (const item of CONFIG) controlsRoot.appendChild(createField(item));
+      }
+      downloadBtn.disabled = true;
+      cutlistText.textContent = '初期化中...';
+      try {
+        await loadLibraries();
+        initializeViewer();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        errorEl.textContent = 'ライブラリの読み込みに失敗しました。ページを再読み込みしてください。';
+        cutlistText.textContent = `初期化エラー:\n${message}`;
+        return;
+      }
+      onResize();
+      update();
+      animate();
+    }
 
     downloadBtn.addEventListener('click', () => {
-      if (!latestMesh) return;
+      if (!latestMesh || !STLExporter) return;
       const exporter = new STLExporter();
       const stl = exporter.parse(latestMesh, { binary: false });
       const blob = new Blob([stl], { type: 'model/stl' });
@@ -429,6 +477,7 @@
     });
 
     function onResize() {
+      if (!renderer || !camera) return;
       const viewer = document.getElementById('viewer');
       const w = viewer.clientWidth;
       const h = viewer.clientHeight;
@@ -439,15 +488,25 @@
     }
 
     window.addEventListener('resize', onResize);
-    onResize();
-    update();
 
     function animate() {
-      requestAnimationFrame(animate);
+      if (!renderer || !scene || !camera || !controls) return;
+      if (isAnimating) return;
+      isAnimating = true;
+      loop();
+    }
+
+    function loop() {
+      requestAnimationFrame(loop);
       controls.update();
       renderer.render(scene, camera);
     }
-    animate();
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initializeApp, { once: true });
+    } else {
+      initializeApp();
+    }
   </script>
 </body>
 </html>
