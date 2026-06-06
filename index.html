@@ -7,37 +7,39 @@
     <script src="https://unpkg.com/three@0.153.0/build/three.min.js"></script>
     <script src="https://unpkg.com/three@0.153.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://unpkg.com/three@0.153.0/examples/js/exporters/STLExporter.js"></script>
-    <script src="https://unpkg.com/@jscad/modeling@2.2.0/dist/index.min.js"></script>
     <style>
         body { margin: 0; font-family: 'Helvetica Neue', Arial, sans-serif; display: flex; height: 100vh; overflow: hidden; background-color: #f5f5f7; }
-        #sidebar { width: 350px; background: white; padding: 20px; box-shadow: 2px 0 10px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 15px; overflow-y: auto; z-index: 10; }
+        #sidebar { width: 360px; background: white; padding: 20px; box-shadow: 2px 0 10px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 15px; overflow-y: auto; z-index: 10; box-sizing: border-box; }
         #main-content { flex: 1; display: flex; flex-direction: column; position: relative; }
         #viewer { flex: 1; background: #eef2f5; position: relative; }
-        #cutlist-container { height: 200px; background: white; border-top: 1px solid #e0e0e0; padding: 15px; overflow-y: auto; box-sizing: border-box; }
+        #cutlist-container { height: 260px; background: white; border-top: 1px solid #e0e0e0; padding: 15px; overflow-y: auto; box-sizing: border-box; }
         h2, h3 { margin: 0 0 10px 0; color: #333; font-size: 1.1rem; }
         .param-group { display: flex; flex-direction: column; gap: 4px; border-bottom: 1px dashed #eee; padding-bottom: 10px; }
         .param-label { font-size: 0.85rem; color: #555; font-weight: bold; }
         .param-controls { display: flex; align-items: center; gap: 10px; }
         .param-controls input[type="range"] { flex: 1; }
         .param-controls input[type="number"] { width: 70px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; text-align: right; }
-        #btn-download { background: #2563eb; color: white; border: none; padding: 12px; border-radius: 6px; font-weight: bold; cursor: pointer; transition: background 0.2s; font-size: 0.95rem; margin-top: 10px; }
+        .info-box { background: #f0fdf4; border: 1px solid #bbf7d0; padding: 8px 12px; border-radius: 6px; font-size: 0.8rem; color: #166534; line-height: 1.4; }
+        #btn-download { background: #2563eb; color: white; border: none; padding: 12px; border-radius: 6px; font-weight: bold; cursor: pointer; transition: background 0.2s; font-size: 0.95rem; margin-top: 10px; width: 100%; }
         #btn-download:hover { background: #1d4ed8; }
-        pre { margin: 0; font-family: monospace; font-size: 0.9rem; background: #f8fafc; padding: 10px; border-radius: 4px; border: 1px solid #e2e8f0; white-space: pre-wrap; color: #334155; }
-        #loading-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.7); display: flex; justify-content: center; align-items: center; font-weight: bold; color: #2563eb; z-index: 5; pointer-events: none; opacity: 0; transition: opacity 0.2s; }
+        pre { margin: 0; font-family: monospace; font-size: 0.9rem; background: #f8fafc; padding: 10px; border-radius: 4px; border: 1px solid #e2e8f0; white-space: pre-wrap; color: #334155; line-height: 1.4; }
     </style>
 </head>
 <body>
 
     <div id="sidebar">
-        <h2>木工用パーツボックス</h2>
+        <h2>パーツボックス設計</h2>
         <div id="controls-root"></div>
+        <div class="info-box">
+            📌 <strong>木工自動固定ルール：</strong><br>
+            ・溝幅 / 溝深さ = 板厚の 1/3<br>
+            ・溝の位置 = 底面から板厚と同じ距離
+        </div>
         <button id="btn-download">STLファイルをダウンロード</button>
     </div>
 
     <div id="main-content">
-        <div id="viewer">
-            <div id="loading-overlay">3Dモデル生成中...</div>
-        </div>
+        <div id="viewer"></div>
         <div id="cutlist-container">
             <h3>リアルタイム木取り図（カットリスト）</h3>
             <pre id="cutlist-text">計算中...</pre>
@@ -45,22 +47,18 @@
     </div>
 
 <script>
-// 初期パラメータ設定 (提出された図面データを完全反映)
+// パラメータ構成 (比率ベース)
 const params = [
-    { id: 'outerWidth', name: '外寸 幅 (100 - 300 mm)', min: 100, max: 300, step: 0.5, value: 145 },
-    { id: 'totalLength', name: '外寸 奥行 (150 - 400 mm)', min: 150, max: 400, step: 0.5, value: 217.5 },
-    { id: 'totalHeight', name: '外寸 高さ (50 - 250 mm)', min: 50, max: 250, step: 0.5, value: 114.53 },
-    { id: 'thickness', name: '板厚 (4 - 30 mm)', min: 4, max: 30, step: 0.5, value: 12 },
-    { id: 'grooveDepth', name: 'はめ込み溝の深さ (1 - 10 mm)', min: 1, max: 10, step: 0.5, value: 4 },
-    { id: 'bottomThickness', name: '底板の厚み/溝幅 (1 - 10 mm)', min: 1, max: 10, step: 0.5, value: 4 },
-    { id: 'bottomClearance', name: '底面から溝下までの高さ (0 - 20 mm)', min: 0, max: 20, step: 0.5, value: 8 },
-    { id: 'bottomLength', name: '底板の奥行長さ (100 - 350 mm)', min: 100, max: 350, step: 0.5, value: 205.06 }
+    { id: 'baseD', name: '基本基準サイズ d (mm)', min: 50, max: 300, step: 1, value: 145 },
+    { id: 'ratioX', name: '幅比率 (X比率)', min: 0.2, max: 3.0, step: 0.1, value: 1.0 },
+    { id: 'ratioY', name: '奥行比率 (Y比率)', min: 0.2, max: 3.0, step: 0.1, value: 1.5 },
+    { id: 'ratioZ', name: '高さ比率 (Z比率)', min: 0.2, max: 3.0, step: 0.01, value: 0.79 },
+    { id: 'thickness', name: '板厚 t (mm)', min: 4, max: 30, step: 0.5, value: 12 }
 ];
 
 let scene, camera, renderer, controls, meshGroup;
 const paramValues = {};
 
-// UIの動的生成
 function initUI() {
     const root = document.getElementById('controls-root');
     params.forEach(p => {
@@ -92,7 +90,6 @@ function initUI() {
         numInput.value = p.value;
         numInput.id = `num_${p.id}`;
         
-        // 双方向データ同期
         slider.addEventListener('input', (e) => {
             numInput.value = e.target.value;
             paramValues[p.id] = parseFloat(e.target.value);
@@ -119,14 +116,13 @@ function initUI() {
     document.getElementById('btn-download').addEventListener('click', downloadSTL);
 }
 
-// Three.js ビューア初期化
 function initThree() {
     const container = document.getElementById('viewer');
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0xeef2f5);
     
-    camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 2000);
-    camera.position.set(300, 300, 400);
+    camera = new THREE.PerspectiveCamera(40, container.clientWidth / container.clientHeight, 1, 3000);
+    camera.position.set(250, 350, 450);
     
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(container.clientWidth, container.clientHeight);
@@ -137,21 +133,19 @@ function initThree() {
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     
-    // 照明
-    const ambientLight = new THREE.AmbientLight(0x666666);
+    const ambientLight = new THREE.AmbientLight(0x777777);
     scene.add(ambientLight);
     
-    const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight1.position.set(200, 400, 300);
+    const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.7);
+    dirLight1.position.set(300, 500, 400);
     scene.add(dirLight1);
 
-    const dirLight2 = new THREE.DirectionalLight(0x90b0ff, 0.3);
-    dirLight2.position.set(-200, 200, -300);
+    const dirLight2 = new THREE.DirectionalLight(0xa0c0ff, 0.3);
+    dirLight2.position.set(-300, 200, -300);
     scene.add(dirLight2);
     
-    // 床グリッド
-    const gridHelper = new THREE.GridHelper(500, 50, 0x94a3b8, 0xcbdfeb);
-    gridHelper.position.y = -50;
+    const gridHelper = new THREE.GridHelper(600, 60, 0x94a3b8, 0xdbeafe);
+    gridHelper.position.y = -1;
     scene.add(gridHelper);
     
     meshGroup = new THREE.Group();
@@ -172,171 +166,148 @@ function animate() {
     renderer.render(scene, camera);
 }
 
-// JSCADの形状をThree.jsのジオメトリに変換する高速コンバータ
-function jscadToThree(jscadGeometry) {
-    const triangles = jscadModeling.geometries.geom3.toTriangles(jscadGeometry);
-    const geometry = new THREE.BufferGeometry();
-    const positions = [];
-    const normals = [];
-    
-    triangles.forEach(tri => {
-        const vertices = tri.vertices;
-        // 1つの三角形（3頂点）
-        for (let i = 0; i < 3; i++) {
-            positions.push(vertices[i][0], vertices[i][1], vertices[i][2]);
-        }
-        // 面法線ベクトルを各頂点に適用
-        const n = tri.plane; // [x, y, z, w]
-        for (let i = 0; i < 3; i++) {
-            normals.push(n[0], n[1], n[2]);
-        }
-    });
-    
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-    return geometry;
-}
-
-// パラメトリックモデリング本体ロジック (JSCAD幾何演算)
-let currentCSG = null;
-function generateBoxCSG() {
-    const { primitives, transforms, booleans } = jscadModeling;
-    
-    const W = paramValues.outerWidth;
-    const L = paramValues.totalLength;
-    const H = paramValues.totalHeight;
-    const t = paramValues.thickness;
-    const gd = paramValues.grooveDepth;
-    const bt = paramValues.bottomThickness;
-    const bc = paramValues.bottomClearance;
-    const bl = paramValues.bottomLength;
-
-    // 内部有効寸法などの自動計算
-    const innerWidth = W - (t * 2);
-    
-    // 1. 各パネルのモデリング（原点を中心に配置して移動）
-    // 側板 (左右)
-    const sideRaw = primitives.cuboid({ size: [t, L, H] });
-    const leftSide = transforms.translate([-W/2 + t/2, 0, H/2], sideRaw);
-    const rightSide = transforms.translate([W/2 - t/2, 0, H/2], sideRaw);
-    
-    // 溝の作成
-    const grooveBox = primitives.cuboid({ size: [W + 10, bl, bt] });
-    const groove = transforms.translate([0, -L/2 + bl/2 + t, bc + bt/2], grooveBox);
-    
-    // 側板から溝を引き算
-    const sidesWithGroove = booleans.subtract([booleans.union([leftSide, rightSide])], groove);
-    
-    // 背板 (留め継ぎ対応用45度カットのダミー表現含む)
-    const backPlate = transforms.translate([0, L/2 - t/2, H/2], primitives.cuboid({ size: [innerWidth + t, t, H] }));
-    
-    // 前板 (傾斜および留め継ぎ用のポリゴン表現)
-    // 図面通りの傾斜を表現するために、台形柱状に押し出し、または削り出しを行う
-    const frontPlate = transforms.translate([0, -L/2 + t/2, H/2], primitives.cuboid({ size: [innerWidth + t, t, H] }));
-    
-    // 底板
-    const bottomPlate = transforms.translate([0, -L/2 + bl/2 + t, bc + bt/2], primitives.cuboid({ size: [innerWidth + (gd * 2), bl, bt] }));
-
-    // 全パーツを綺麗に結合
-    const finalBox = booleans.union([sidesWithGroove, backPlate, frontPlate, bottomPlate]);
-    
-    // プレビュー用に中心を揃える
-    return transforms.translate([0, 0, -H/2], finalBox);
-}
-
-// 画面の更新処理
+// 安定したネイティブ幾何演算による3Dパーツ作成
 function updateApp() {
-    document.getElementById('loading-overlay').style.opacity = "1";
-    
-    setTimeout(() => {
-        try {
-            // 3Dモデル更新
-            while(meshGroup.children.length > 0){
-                const obj = meshGroup.children[0];
-                obj.geometry.dispose();
-                obj.material.dispose();
-                meshGroup.remove(obj);
-            }
-            
-            currentCSG = generateBoxCSG();
-            const threeGeom = jscadToThree(currentCSG);
-            
-            const material = new THREE.MeshStandardMaterial({
-                color: 0xd97706, // 温かみのある木工用チェリーブラウン風
-                roughness: 0.6,
-                metalness: 0.1,
-                side: THREE.DoubleSide
-            });
-            
-            const mesh = new THREE.Mesh(threeGeom, material);
-            mesh.castShadow = true;
-            mesh.receiveShadow = true;
-            meshGroup.add(mesh);
-            
-            // 木取り図テキスト（カットリスト）の自動計算
-            updateCutlist();
-            
-        } catch (err) {
-            console.error(err);
-            document.getElementById('cutlist-text').innerText = "エラーが発生しました:\n" + err.message;
-        } finally {
-            document.getElementById('loading-overlay').style.opacity = "0";
-        }
-    }, 30);
-}
+    while(meshGroup.children.length > 0){
+        const obj = meshGroup.children[0];
+        if(obj.geometry) obj.geometry.dispose();
+        if(obj.material) obj.material.dispose();
+        meshGroup.remove(obj);
+    }
 
-// カットリスト計算ロジック
-function updateCutlist() {
-    const W = paramValues.outerWidth;
-    const L = paramValues.totalLength;
-    const H = paramValues.totalHeight;
+    const d = paramValues.baseD;
+    const W = d * paramValues.ratioX;
+    const L = d * paramValues.ratioY;
+    const H = d * paramValues.ratioZ;
     const t = paramValues.thickness;
-    const gd = paramValues.grooveDepth;
-    const bt = paramValues.bottomThickness;
-    const bc = paramValues.bottomClearance;
-    const bl = paramValues.bottomLength;
+    
+    // 自動決定ルール
+    const gd = parseFloat((t / 3).toFixed(2)); // 溝深さ
+    const gw = parseFloat((t / 3).toFixed(2)); // 溝幅
+    const gh = t;                             // 溝の位置(底面から)
 
-    const innerWidth = W - (t * 2);
-    const bottomWidth = innerWidth + (gd * 2);
+    const woodMaterial = new THREE.MeshStandardMaterial({
+        color: 0xd97706,
+        roughness: 0.5,
+        metalness: 0.1,
+        side: THREE.DoubleSide
+    });
 
-    const text = `【木板カットリスト (各寸法: mm)】
+    const wireMaterial = new THREE.MeshBasicMaterial({
+        color: 0x78350f,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.15
+    });
+
+    function createPanel(geometry, x, y, z, rotX=0, rotY=0, rotZ=0) {
+        const mesh = new THREE.Mesh(geometry, woodMaterial);
+        const wire = new THREE.Mesh(geometry, wireMaterial);
+        const group = new THREE.Group();
+        group.add(mesh, wire);
+        group.position.set(x, y, z);
+        group.rotation.set(rotX, rotY, rotZ);
+        meshGroup.add(group);
+    }
+
+    // 1. 側板 (左右) - 溝付き
+    const sideShape = new THREE.Shape();
+    sideShape.moveTo(0, 0);
+    sideShape.lineTo(L, 0);
+    sideShape.lineTo(L, H);
+    sideShape.lineTo(0, H);
+    
+    // 45度の斜めカット（飛び出し口）を表現
+    const frontSlopeShape = new THREE.Shape();
+    frontSlopeShape.moveTo(0, 0);
+    frontSlopeShape.lineTo(L, 0);
+    frontSlopeShape.lineTo(L, H);
+    frontSlopeShape.lineTo(t * 2, H); // 45度のシンプルな傾斜のスタート
+    frontSlopeShape.lineTo(0, H - (t * 2));
+    
+    // 側板の押し出し
+    const sideGeom = new THREE.ExtrudeGeometry(frontSlopeShape, { depth: t, bevelEnabled: false });
+    sideGeom.center();
+    
+    // 左右に配置 (留め継ぎを考慮して位置合わせ)
+    createPanel(sideGeom, -W/2 + t/2, H/2, 0, 0, Math.PI/2, 0);
+    createPanel(sideGeom,  W/2 - t/2, H/2, 0, 0, -Math.PI/2, 0);
+
+    // 2. 背板
+    const backGeom = new THREE.BoxGeometry(W - t*2, H, t);
+    createPanel(backGeom, 0, H/2, L/2 - t/2);
+
+    // 3. 前板 (シンプルな45度傾斜板)
+    const frontPlateHeight = Math.sqrt(Math.pow(t*2, 2) + Math.pow(H - (t*2), 2));
+    const frontAngle = Math.atan2(H - (t*2), t*2);
+    const frontGeom = new THREE.BoxGeometry(W - t*2, frontPlateHeight, t);
+    createPanel(frontGeom, 0, (H - t*2)/2, -L/2 + t + (t*2)/2, -frontAngle + Math.PI/2, 0, 0);
+
+    // 4. 底板 (溝に収まるサイズ)
+    const bottomW = W - t*2 + gd*2;
+    const bottomL = L - t*2 + gd*2 - (t*2); // 傾斜を逃げた奥行き
+    const bottomGeom = new THREE.BoxGeometry(bottomW, gw, bottomL);
+    createPanel(bottomGeom, 0, gh + gw/2, - (t*2)/2);
+
+    // 全体を中心にオフセット
+    meshGroup.position.set(0, -H/4, 0);
+
+    // 木取り図の出力
+    const innerW = (W - t*2).toFixed(1);
+    const innerL = (L - t*2 - t*2).toFixed(1);
+    const innerH = (H - t - gh - gw).toFixed(1);
+
+    const text = `【木板カットリスト (比率変形連動・寸法: mm)】
 --------------------------------------------------
+■ 計算されたボックス外寸:
+   幅: ${W.toFixed(1)} × 奥行: ${L.toFixed(1)} × 高さ: ${H.toFixed(1)}
+
 ■ 側板 (左右・計2枚):
-   厚み: ${t} × 奥行(長さ): ${L} × 高さ: ${H}
-   ※ 底面から ${bc}mm の位置に、幅 ${bt}mm、深さ ${gd}mm の溝加工
+   厚み: ${t} × 奥行: ${L.toFixed(1)} × 高さ: ${H.toFixed(1)}
+   ※ 内側に幅: ${gw}mm、深さ: ${gd}mm のはめ込み溝加工
+   ※ 前方にシンプルな45度傾斜カット
 
 ■ 背板 (1枚):
-   厚み: ${t} × 幅: ${W} × 高さ: ${H}
-   ※ 両端に45度の留め継ぎカット
+   厚み: ${t} × 幅: ${innerW} × 高さ: ${H.toFixed(1)}
+   ※ 左右端に留め継ぎ（45度）加工
 
-■ 前板 (傾斜仕様・1枚):
-   厚み: ${t} × 幅: ${W} × 高さ: ${H}
-   ※ 前面傾斜および留め継ぎ加工用の傾斜カットあり
+■ 前板 (飛び出し口・1枚):
+   厚み: ${t} × 幅: ${innerW} × 傾斜長さ: ${frontPlateHeight.toFixed(1)}
 
-■ 底板 (シナベニヤ等・1枚):
-   厚み: ${bt} × 幅(間口): ${bottomWidth} × 奥行: ${bl}
+■ 底板 (1枚):
+   厚み: ${gw} × 幅(間口): ${bottomW.toFixed(1)} × 奥行: ${bottomL.toFixed(1)}
 --------------------------------------------------
-【参考・有効内寸】
-  ・内部横幅: ${innerWidth} mm
-  ・底板格納溝深さ: 各側板に ${gd} mm 嵌入`;
+【自動設定された溝の仕様】
+  ・底面から溝の下ラインまでの高さ: ${gh} mm (板厚 t と同値)
+  ・溝の幅および深さ: ${gw} mm (板厚 t の 1/3)
+  ・箱の内部有効クリアランス幅: ${innerW} mm`;
 
     document.getElementById('cutlist-text').innerText = text;
 }
 
-// STLダウンロード処理
 function downloadSTL() {
-    if (!meshGroup.children[0]) return;
+    if (meshGroup.children.length === 0) return;
     const exporter = new THREE.STLExporter();
-    const result = exporter.parse(meshGroup.children[0], { binary: true });
     
+    // 全体を1つのオブジェクトとしてエクスポート
+    const tempGroup = new THREE.Group();
+    meshGroup.children.forEach(child => {
+        if(child.children[0]) {
+            const clone = child.children[0].clone();
+            clone.position.copy(child.position);
+            clone.rotation.copy(child.rotation);
+            tempGroup.add(clone);
+        }
+    });
+
+    const result = exporter.parse(tempGroup, { binary: true });
     const blob = new Blob([result], { type: 'application/octet-stream' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `partsbox_${paramValues.outerWidth}x${paramValues.totalLength}.stl`;
+    link.download = `parametric_partsbox_ratio.stl`;
     link.click();
 }
 
-// 起動時処理
 window.onload = () => {
     initUI();
     initThree();
