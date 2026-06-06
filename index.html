@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>木工用パラメトリック・パーツボックス・ジェネレーター</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      height: 100vh;
+      overflow: hidden;
+      background: #f5f6f7;
+      color: #1f2937;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 350px 1fr;
+      height: 100vh;
+    }
+    .sidebar {
+      border-right: 1px solid #d1d5db;
+      background: #ffffff;
+      padding: 16px;
+      overflow: auto;
+    }
+    h1 {
+      font-size: 18px;
+      margin: 0 0 14px;
+    }
+    .field {
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px dashed #e5e7eb;
+    }
+    .field:last-of-type { border-bottom: 0; }
+    .field label {
+      font-size: 13px;
+      font-weight: 600;
+      display: block;
+      margin-bottom: 6px;
+    }
+    .input-row {
+      display: grid;
+      grid-template-columns: 1fr 92px;
+      gap: 8px;
+      align-items: center;
+    }
+    input[type="range"] { width: 100%; }
+    input[type="number"] {
+      width: 100%;
+      padding: 5px 6px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .download-btn {
+      width: 100%;
+      margin-top: 8px;
+      padding: 10px 12px;
+      border: 0;
+      border-radius: 8px;
+      font-weight: 700;
+      cursor: pointer;
+      background: #2563eb;
+      color: #fff;
+    }
+    .download-btn:disabled {
+      background: #94a3b8;
+      cursor: not-allowed;
+    }
+    .error {
+      margin-top: 8px;
+      min-height: 18px;
+      color: #b91c1c;
+      font-size: 12px;
+    }
+    .main {
+      display: grid;
+      grid-template-rows: 1fr 1fr;
+      height: 100%;
+      min-width: 0;
+    }
+    .viewer-wrap {
+      position: relative;
+      background: #eceff1;
+      border-bottom: 1px solid #d1d5db;
+      min-height: 0;
+    }
+    #viewer {
+      position: absolute;
+      inset: 0;
+    }
+    .cutlist {
+      background: #ffffff;
+      overflow: auto;
+      padding: 14px 16px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .cutlist h2 {
+      margin: 0 0 10px;
+      font-size: 16px;
+    }
+    .cutlist pre {
+      margin: 0;
+      white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h1>木工用パーツボックス</h1>
+      <div id="controls"></div>
+      <button id="downloadBtn" class="download-btn">STLファイルをダウンロード</button>
+      <div id="error" class="error"></div>
+    </aside>
+
+    <main class="main">
+      <section class="viewer-wrap"><div id="viewer"></div></section>
+      <section class="cutlist">
+        <h2>リアルタイム木取り図（カットリスト）</h2>
+        <pre id="cutlistText"></pre>
+      </section>
+    </main>
+  </div>
+
+  <script src="https://unpkg.com/@jscad/modeling@2.2.0/dist/index.min.js"></script>
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.164.1/build/three.module.js';
+    import { OrbitControls } from 'https://unpkg.com/three@0.164.1/examples/jsm/controls/OrbitControls.js';
+    import { STLExporter } from 'https://unpkg.com/three@0.164.1/examples/jsm/exporters/STLExporter.js';
+
+    const { primitives, booleans, transforms, extrusions, geometries, measurements } = window.jscadModeling;
+
+    const CONFIG = [
+      { key: 'outerWidth', label: '外寸 幅', min: 100, max: 300, step: 0.01, value: 145 },
+      { key: 'totalLength', label: '外寸 奥行', min: 150, max: 400, step: 0.01, value: 217.5 },
+      { key: 'totalHeight', label: '外寸 高さ', min: 50, max: 250, step: 0.01, value: 114.53 },
+      { key: 'thickness', label: '板厚', min: 4, max: 30, step: 0.01, value: 12 },
+      { key: 'grooveDepth', label: 'はめ込み溝の深さ', min: 1, max: 10, step: 0.01, value: 4 },
+      { key: 'grooveWidth', label: '底板の厚み/溝幅', min: 1, max: 10, step: 0.01, value: 4 },
+      { key: 'grooveHeight', label: '底面から溝下までの高さ', min: 0, max: 20, step: 0.01, value: 8 },
+      { key: 'bottomLength', label: '底板の奥行長さ', min: 100, max: 350, step: 0.01, value: 205.06 }
+    ];
+
+    const state = Object.fromEntries(CONFIG.map((item) => [item.key, item.value]));
+    const controlsRoot = document.getElementById('controls');
+    const cutlistText = document.getElementById('cutlistText');
+    const errorEl = document.getElementById('error');
+    const downloadBtn = document.getElementById('downloadBtn');
+
+    let latestMesh = null;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xeceff1);
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
+    camera.position.set(260, 220, 260);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    document.getElementById('viewer').appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.target.set(0, 50, 0);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.75);
+    dirLight.position.set(180, 250, 100);
+    scene.add(dirLight);
+    scene.add(new THREE.GridHelper(600, 60, 0xb0b8c0, 0xd2d7dc));
+
+    function mm(v) {
+      return `${Number(v).toFixed(2)} mm`;
+    }
+
+    function validateParams(params) {
+      if (params.outerWidth <= params.thickness * 2) {
+        return '外寸幅は板厚の2倍より大きくしてください。';
+      }
+      if (params.totalHeight <= params.thickness) {
+        return '外寸高さは板厚より大きくしてください。';
+      }
+      if (params.bottomLength > params.totalLength - params.thickness) {
+        return '底板の奥行長さは、外寸奥行 - 板厚 以下にしてください。';
+      }
+      return '';
+    }
+
+    function buildModel(params) {
+      const { outerWidth, totalLength, totalHeight, thickness, grooveDepth, grooveWidth, grooveHeight, bottomLength } = params;
+      const innerWidth = outerWidth - (thickness * 2);
+      const bottomWidth = innerWidth + (grooveDepth * 2);
+
+      const sidePoints = [
+        [0, totalHeight], [0, thickness], [thickness, 0],
+        [thickness + 132.03, 0], [totalLength, grooveHeight + grooveWidth], [totalLength - 40, totalHeight]
+      ];
+      let sideShape = primitives.polygon({ points: sidePoints });
+      let sideLeft = extrusions.extrudeLinear({ height: thickness }, sideShape);
+      sideLeft = transforms.translate([0, 0, innerWidth / 2], sideLeft);
+      let sideRight = extrusions.extrudeLinear({ height: thickness }, sideShape);
+      sideRight = transforms.translate([0, 0, -(innerWidth / 2) - thickness], sideRight);
+
+      let grooveCutterLeft = primitives.cuboid({ size: [bottomLength, grooveWidth, grooveDepth * 2] });
+      grooveCutterLeft = transforms.translate([thickness + (bottomLength / 2), grooveHeight + (grooveWidth / 2), (innerWidth / 2) + thickness], grooveCutterLeft);
+      let grooveCutterRight = primitives.cuboid({ size: [bottomLength, grooveWidth, grooveDepth * 2] });
+      grooveCutterRight = transforms.translate([thickness + (bottomLength / 2), grooveHeight + (grooveWidth / 2), -(innerWidth / 2) - thickness], grooveCutterRight);
+      sideLeft = booleans.subtract(sideLeft, grooveCutterLeft);
+      sideRight = booleans.subtract(sideRight, grooveCutterRight);
+
+      let bottomPlate = primitives.cuboid({ size: [bottomLength, grooveWidth, bottomWidth] });
+      bottomPlate = transforms.translate([thickness + (bottomLength / 2), grooveHeight + (grooveWidth / 2), 0], bottomPlate);
+
+      const backPlateHeight = totalHeight - thickness;
+      let backPlate = primitives.cuboid({ size: [thickness, backPlateHeight, outerWidth] });
+      const miterCutterSize = Math.max(outerWidth, totalHeight) * 2;
+      let backLeftCutter = primitives.cuboid({ size: [thickness * 3, backPlateHeight * 1.2, miterCutterSize] });
+      backLeftCutter = transforms.rotateY(Math.PI / 4, backLeftCutter);
+      backLeftCutter = transforms.translate([0, 0, outerWidth / 2], backLeftCutter);
+      let backRightCutter = primitives.cuboid({ size: [thickness * 3, backPlateHeight * 1.2, miterCutterSize] });
+      backRightCutter = transforms.rotateY(-Math.PI / 4, backRightCutter);
+      backRightCutter = transforms.translate([0, 0, -outerWidth / 2], backRightCutter);
+      backPlate = booleans.subtract(backPlate, backLeftCutter, backRightCutter);
+      backPlate = transforms.translate([thickness / 2, thickness + (backPlateHeight / 2), 0], backPlate);
+
+      const frontP1 = [thickness + 132.03, 0];
+      const frontP2 = [totalLength, grooveHeight + grooveWidth];
+      const dx = frontP2[0] - frontP1[0];
+      const dy = frontP2[1] - frontP1[1];
+      const frontPlateLength = Math.sqrt(dx * dx + dy * dy);
+      const frontAngle = Math.atan2(dy, dx);
+      let frontPlate = primitives.cuboid({ size: [frontPlateLength, thickness, outerWidth] });
+      let frontLeftCutter = primitives.cuboid({ size: [frontPlateLength * 1.2, thickness * 3, miterCutterSize] });
+      frontLeftCutter = transforms.rotateY(Math.PI / 4, frontLeftCutter);
+      frontLeftCutter = transforms.translate([0, 0, outerWidth / 2], frontLeftCutter);
+      let frontRightCutter = primitives.cuboid({ size: [frontPlateLength * 1.2, thickness * 3, miterCutterSize] });
+      frontRightCutter = transforms.rotateY(-Math.PI / 4, frontRightCutter);
+      frontRightCutter = transforms.translate([0, 0, -outerWidth / 2], frontRightCutter);
+      frontPlate = booleans.subtract(frontPlate, frontLeftCutter, frontRightCutter);
+      frontPlate = transforms.rotateZ(frontAngle, frontPlate);
+      frontPlate = transforms.translate([(frontP1[0] + frontP2[0]) / 2, (frontP1[1] + frontP2[1]) / 2, 0], frontPlate);
+
+      const assembled = booleans.union(sideLeft, sideRight, bottomPlate, backPlate, frontPlate);
+
+      return {
+        assembled,
+        metrics: {
+          innerWidth,
+          bottomWidth,
+          backPlateHeight,
+          frontPlateLength,
+          frontAngle,
+          sidePoints,
+          frontP1,
+          frontP2
+        }
+      };
+    }
+
+    function geom3ToThree(geom3) {
+      const polygons = geometries.geom3.toPolygons(geom3);
+      const positions = [];
+      const normals = [];
+
+      for (const poly of polygons) {
+        const vertices = poly.vertices;
+        if (!vertices || vertices.length < 3) continue;
+
+        const a = new THREE.Vector3(...vertices[0]);
+        for (let i = 1; i < vertices.length - 1; i += 1) {
+          const b = new THREE.Vector3(...vertices[i]);
+          const c = new THREE.Vector3(...vertices[i + 1]);
+          const n = new THREE.Vector3().crossVectors(
+            new THREE.Vector3().subVectors(b, a),
+            new THREE.Vector3().subVectors(c, a)
+          ).normalize();
+
+          for (const v of [a, b, c]) {
+            positions.push(v.x, v.y, v.z);
+            normals.push(n.x, n.y, n.z);
+          }
+        }
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+      geometry.computeBoundingBox();
+      return geometry;
+    }
+
+    function renderModel(geom3) {
+      if (latestMesh) {
+        scene.remove(latestMesh);
+        latestMesh.geometry.dispose();
+        latestMesh.material.dispose();
+      }
+
+      const geometry = geom3ToThree(geom3);
+      const box = geometry.boundingBox;
+      if (box) {
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+        geometry.translate(-center.x, 0, -center.z);
+      }
+
+      latestMesh = new THREE.Mesh(
+        geometry,
+        new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.75, metalness: 0.02 })
+      );
+      scene.add(latestMesh);
+
+      const size = measurements.measureBoundingBox(geom3);
+      const w = Math.abs(size[1][0] - size[0][0]);
+      const h = Math.abs(size[1][1] - size[0][1]);
+      const d = Math.abs(size[1][2] - size[0][2]);
+      const maxDim = Math.max(w, h, d);
+      camera.position.set(maxDim * 1.1, maxDim * 0.9, maxDim * 1.1);
+      controls.target.set(0, h * 0.35, 0);
+      controls.update();
+    }
+
+    function buildCutList(params, metrics) {
+      const { outerWidth, totalLength, totalHeight, thickness, grooveDepth, grooveWidth, grooveHeight, bottomLength } = params;
+      const { innerWidth, bottomWidth, backPlateHeight, frontPlateLength, frontAngle, frontP1, frontP2, sidePoints } = metrics;
+
+      const sideProfile = sidePoints.map((p) => `(${p[0].toFixed(2)}, ${p[1].toFixed(2)})`).join(' → ');
+      return [
+        `入力パラメータ:`,
+        `- 外寸: 幅 ${mm(outerWidth)}, 奥行 ${mm(totalLength)}, 高さ ${mm(totalHeight)}`,
+        `- 板厚 ${mm(thickness)}, 溝 深さ ${mm(grooveDepth)}, 溝幅 ${mm(grooveWidth)}, 溝高さ ${mm(grooveHeight)}`,
+        ``,
+        `木取り寸法 (mm):`,
+        `1) 側板 ×2`,
+        `   - 厚み: ${mm(thickness)}`,
+        `   - 側面プロファイル座標: ${sideProfile}`,
+        `   - 溝加工: 長さ ${mm(bottomLength)} / 幅 ${mm(grooveWidth)} / 深さ ${mm(grooveDepth * 2)}`,
+        ``,
+        `2) 底板 ×1`,
+        `   - ${mm(bottomLength)} × ${mm(bottomWidth)} × 厚み ${mm(grooveWidth)}`,
+        ``,
+        `3) 背板(45°留め) ×1`,
+        `   - ${mm(thickness)} × ${mm(backPlateHeight)} × ${mm(outerWidth)}`,
+        ``,
+        `4) 前板(傾斜 + 45°留め) ×1`,
+        `   - 長さ ${mm(frontPlateLength)} × 厚み ${mm(thickness)} × 幅 ${mm(outerWidth)}`,
+        `   - 取付基準点: P1(${frontP1[0].toFixed(2)}, ${frontP1[1].toFixed(2)}) → P2(${frontP2[0].toFixed(2)}, ${frontP2[1].toFixed(2)})`,
+        `   - 傾斜角: ${(frontAngle * 180 / Math.PI).toFixed(2)}°`,
+        ``,
+        `参考値:`,
+        `- 箱内幅: ${mm(innerWidth)}`,
+        `- 底板必要幅(溝差込込み): ${mm(bottomWidth)}`
+      ].join('\n');
+    }
+
+    function update() {
+      const err = validateParams(state);
+      errorEl.textContent = err;
+      downloadBtn.disabled = Boolean(err);
+      if (err) {
+        cutlistText.textContent = 'パラメータを調整してください。\n' + err;
+        if (latestMesh) latestMesh.visible = false;
+        return;
+      }
+      if (latestMesh) latestMesh.visible = true;
+
+      const { assembled, metrics } = buildModel(state);
+      renderModel(assembled);
+      cutlistText.textContent = buildCutList(state, metrics);
+    }
+
+    function clamp(v, min, max) {
+      return Math.min(max, Math.max(min, v));
+    }
+
+    function createField(item) {
+      const wrap = document.createElement('div');
+      wrap.className = 'field';
+      wrap.innerHTML = `
+        <label for="${item.key}-range">${item.label} (${item.min} - ${item.max} mm)</label>
+        <div class="input-row">
+          <input id="${item.key}-range" type="range" min="${item.min}" max="${item.max}" step="${item.step}" value="${item.value}" />
+          <input id="${item.key}-number" type="number" min="${item.min}" max="${item.max}" step="${item.step}" value="${item.value}" />
+        </div>
+      `;
+
+      const range = wrap.querySelector(`#${item.key}-range`);
+      const number = wrap.querySelector(`#${item.key}-number`);
+
+      const sync = (source) => {
+        const raw = Number(source.value);
+        const value = Number.isFinite(raw) ? clamp(raw, item.min, item.max) : item.value;
+        state[item.key] = value;
+        range.value = String(value);
+        number.value = String(value);
+        update();
+      };
+
+      range.addEventListener('input', () => sync(range));
+      number.addEventListener('input', () => sync(number));
+      number.addEventListener('blur', () => sync(number));
+      return wrap;
+    }
+
+    for (const item of CONFIG) controlsRoot.appendChild(createField(item));
+
+    downloadBtn.addEventListener('click', () => {
+      if (!latestMesh) return;
+      const exporter = new STLExporter();
+      const stl = exporter.parse(latestMesh, { binary: false });
+      const blob = new Blob([stl], { type: 'model/stl' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'partsbox.stl';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    function onResize() {
+      const viewer = document.getElementById('viewer');
+      const w = viewer.clientWidth;
+      const h = viewer.clientHeight;
+      if (!w || !h) return;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    }
+
+    window.addEventListener('resize', onResize);
+    onResize();
+    update();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+</html>
