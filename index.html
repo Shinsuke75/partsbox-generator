@@ -287,34 +287,33 @@ function buildSolidWithJscad(dims) {
     const shell = subtract(outer, inner, frontCutter, grooveLeft, grooveRight, grooveBack);
 
     // ── 前面ノーズ（直角三角形プリズム、下半分のみ） ─────────────
-    // 側面断面：直角三角形
-    //   頂点B (0, 0)     = 前面・中央高さ（直角コーナー）
-    //   頂点C (-H/2, 0)  = 先端（H/2前方・中央高さ）
-    //   頂点A (0, -H/2)  = 前面・底面
-    // 上半分（中央高さ〜天面）は開口したまま
+    // 側面断面：直角三角形（直角は前面・底面コーナー）
+    //   頂点A (0,        0    ) = 前面・中央高さ（ノーズ上端）
+    //   頂点B (-H/2,    -H/2  ) = 先端（H/2前方・底面レベル）
+    //   頂点C (0,       -H/2  ) = 前面・底面（直角コーナー）
+    // 底面は水平に前方へ延長、斜面は45°で中央高さから先端へ
     const noseExt = d.noseExt;
     const sq2 = Math.SQRT2;
 
     const outerNoseProf = polygon({ points: [
-        [0,        0       ],   // B: 前面・中央高さ（直角）
-        [-noseExt, 0       ],   // C: 先端
-        [0,       -d.H / 2]    // A: 前面・底面
+        [0,        0       ],   // A: 前面・中央高さ
+        [-noseExt, -d.H / 2],   // B: 先端（底面レベル）
+        [0,       -d.H / 2]    // C: 前面・底面（直角）
     ]});
     const outerNoseRaw = extrudeLinear({ height: d.W }, outerNoseProf);
-    // rotateY(-PI/2): profileX→worldZ, extrusionZ→world(-X)
     const outerNose = translate(
         [d.W / 2, 0, -d.L / 2],
         rotateY(-Math.PI / 2, outerNoseRaw)
     );
 
-    // 内側プロファイル（板厚 t オフセット）
-    //   内側B: 直角コーナーから Z方向+t, Y方向-t
-    //   内側C: 斜辺法線方向（1/√2, 1/√2）にt移動
-    //   内側A: 底面からY方向+t, 前面からZ方向+t
+    // 内側プロファイル（板厚 t 均一オフセット）
+    //   直角Cオフセット → C' = [t, -(H/2-t)]
+    //   前面Aオフセット → A' = [t, t(1-√2)]  (前面X=+t, 斜辺内側と交点)
+    //   先端Bオフセット → B' = [-(noseExt-t(1+√2)), -(H/2-t)]
     const innerNoseProf = polygon({ points: [
-        [d.t,                    -d.t              ],   // 内側B
-        [-(noseExt - d.t / sq2),  d.t / sq2        ],   // 内側C
-        [d.t,                    -(d.H / 2 - d.t)  ]    // 内側A
+        [d.t,                       d.t * (1 - sq2)    ],   // 内側A'
+        [-(noseExt - d.t*(1+sq2)),  -(d.H/2 - d.t)    ],   // 内側B'
+        [d.t,                       -(d.H/2 - d.t)    ]    // 内側C'
     ]});
     const innerNoseRaw = extrudeLinear({ height: innerW }, innerNoseProf);
     const innerNose = translate(
