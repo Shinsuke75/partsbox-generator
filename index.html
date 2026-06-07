@@ -50,7 +50,7 @@
             ・底板溝の幅 = 板厚 t の 1/3<br>
             ・底板溝の深さ = 板厚 t の 1/3<br>
             ・溝位置 = 底面から板厚 t の高さ<br>
-            ・前面ノーズ = 45°矢印形（H/2 前方突出）
+            ・前面ノーズ = 45°直角三角形（下半分のみ）
         </div>
         <button id="btn-download">STL をエクスポート</button>
     </div>
@@ -233,7 +233,7 @@ function calculateDimensions() {
     const grooveWidth   = t / 3;
     const grooveDepth   = t / 3;
     const grooveCenterY = -H / 2 + 5 * t / 6;
-    const noseExt       = H / 2;  // 前方突出量（矢印先端まで）
+    const noseExt       = H / 2;  // 前方突出量（下半分の45°直角三角形）
 
     return { d, W, L, H, t, grooveWidth, grooveDepth, grooveCenterY, noseExt };
 }
@@ -286,34 +286,35 @@ function buildSolidWithJscad(dims) {
 
     const shell = subtract(outer, inner, frontCutter, grooveLeft, grooveRight, grooveBack);
 
-    // ── 前面ノーズ（矢印形プリズム） ─────────────────────────────
-    // 側面から見ると二等辺三角形：前面からH/2前方に突出、先端は中央高さ（45°）
-    // polygon XY平面: X=深さ方向(前=-負), Y=高さ方向
-    // extrudeLinear で Z方向（幅）に押し出し → rotateY(-90°) で軸変換
+    // ── 前面ノーズ（直角三角形プリズム、下半分のみ） ─────────────
+    // 側面断面：直角三角形
+    //   頂点B (0, 0)     = 前面・中央高さ（直角コーナー）
+    //   頂点C (-H/2, 0)  = 先端（H/2前方・中央高さ）
+    //   頂点A (0, -H/2)  = 前面・底面
+    // 上半分（中央高さ〜天面）は開口したまま
     const noseExt = d.noseExt;
+    const sq2 = Math.SQRT2;
 
     const outerNoseProf = polygon({ points: [
-        [0,        d.H / 2],
-        [-noseExt, 0       ],
-        [0,       -d.H / 2]
+        [0,        0       ],   // B: 前面・中央高さ（直角）
+        [-noseExt, 0       ],   // C: 先端
+        [0,       -d.H / 2]    // A: 前面・底面
     ]});
     const outerNoseRaw = extrudeLinear({ height: d.W }, outerNoseProf);
     // rotateY(-PI/2): profileX→worldZ, extrusionZ→world(-X)
-    // translate([W/2, 0, -L/2]): X中央揃え、Z=ボックス前面に接合
     const outerNose = translate(
         [d.W / 2, 0, -d.L / 2],
         rotateY(-Math.PI / 2, outerNoseRaw)
     );
 
-    // 内側三角（板厚tオフセット。45°面は法線方向にtずつ → 各軸t/√2）
-    const sq2 = Math.SQRT2;
-    const innerNoseHalfH = Math.max(0.1, d.H / 2 - d.t / sq2);
-    const innerNoseExt   = Math.max(0.1, noseExt - d.t * sq2);
-
+    // 内側プロファイル（板厚 t オフセット）
+    //   内側B: 直角コーナーから Z方向+t, Y方向-t
+    //   内側C: 斜辺法線方向（1/√2, 1/√2）にt移動
+    //   内側A: 底面からY方向+t, 前面からZ方向+t
     const innerNoseProf = polygon({ points: [
-        [ d.t / sq2,    innerNoseHalfH],
-        [-innerNoseExt, 0             ],
-        [ d.t / sq2,   -innerNoseHalfH]
+        [d.t,                    -d.t              ],   // 内側B
+        [-(noseExt - d.t / sq2),  d.t / sq2        ],   // 内側C
+        [d.t,                    -(d.H / 2 - d.t)  ]    // 内側A
     ]});
     const innerNoseRaw = extrudeLinear({ height: innerW }, innerNoseProf);
     const innerNose = translate(
@@ -430,13 +431,13 @@ function updateCutList(d) {
 `【木取り図 / カットリスト（mm）】
 ────────────────────────────────────────
 外寸: 幅 ${d.W.toFixed(1)} × 奥行 ${d.L.toFixed(1)} × 高さ ${d.H.toFixed(1)}
-ノーズ突出: ${noseExt.toFixed(1)} mm（前方 H/2、45°矢印形）
+ノーズ突出: ${noseExt.toFixed(1)} mm（前方 H/2、45°直角三角形・下半分）
 
 側板（左・右 各1枚 計2枚）※ペンタゴン形状
   厚み ${d.t.toFixed(1)} × 背面高さ ${d.H.toFixed(1)} × 奥行(本体) ${d.L.toFixed(1)}
-  ※前方に向けて45°で先端（高さ0）に収束する矢印形
+  ※前方45°で先端（中央高さ）に収束。上半分前面は開口
 
-前面ノーズ板（1枚）※二等辺三角形断面
+前面ノーズ板（1枚）※直角三角形断面（下半分のみ）
   厚み ${d.t.toFixed(1)} × 幅 ${innerW.toFixed(1)} × 突出量 ${noseExt.toFixed(1)}
 
 背板（1枚）
